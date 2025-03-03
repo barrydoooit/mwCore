@@ -39,7 +39,7 @@ def offline_main():
         # Control loop
         while not sensor_data.is_finished():
             try:
-                dataOk, _, detObj = sensor_data.get_data()
+                dataOk, _, detObj, gt = sensor_data.get_data()
 
                 if dataOk:
                     if first_iter:
@@ -59,7 +59,7 @@ def offline_main():
                         # Posture Estimation module
                         trackbuffer.estimate_posture(model)
 
-                    visual.update(trackbuffer, detObj)
+                    visual.update(trackbuffer, detObj, gt)
 
             except KeyboardInterrupt:
                 break

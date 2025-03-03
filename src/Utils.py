@@ -1,3 +1,4 @@
+import pandas as pd
 from sklearn.cluster import DBSCAN
 from collections import deque
 import constants as const
@@ -79,6 +80,10 @@ class OfflineManager:
 
     def __init__(self, experiment_path):
         self.experiment_path = experiment_path
+        self.ground_truth_file = os.path.join(experiment_path, "../../../log/kinect", os.path.basename(experiment_path) + ".csv")
+        self.ground_truth_df = pd.read_csv(self.ground_truth_file)
+        # self.ground_truth_file = os.path.join(experiment_path, "../../../formatted/kinect", "0", "testing_labels.npy")
+        # self.ground_truth_arr = np.load(self.ground_truth_file))
         self.frame_count = 0
         self.pointer = [0, 1]
         self.read_next_frames()
@@ -88,6 +93,7 @@ class OfflineManager:
         Read the next batch of frames from the given experiment file starting from the specified frame number.
         """
         self.pointclouds = {}
+        self.ground_truth = {}
         self.last_frame = None
 
         while len(self.pointclouds) < const.FB_READ_BUFFER_SIZE:
@@ -127,6 +133,8 @@ class OfflineManager:
                                 "peakVal": [coords[4]],
                                 "posix": [coords[5]],
                             }
+                            self.ground_truth[framenum] = self.ground_truth_df.iloc[(self.ground_truth_df.iloc[:, 0] - coords[5]).abs().argsort()[:1], 2:59].to_numpy()
+                            # self.ground_truth[framenum] = self.ground_truth_arr[framenum]
 
                         self.last_frame = framenum
 
@@ -161,9 +169,9 @@ class OfflineManager:
             self.read_next_frames()
 
         if self.frame_count in self.pointclouds:
-            return True, self.frame_count, self.pointclouds[self.frame_count]
+            return True, self.frame_count, self.pointclouds[self.frame_count], self.ground_truth[self.frame_count]
         else:
-            return False, self.frame_count, None
+            return False, self.frame_count, None, None
 
     def is_finished(self):
         """

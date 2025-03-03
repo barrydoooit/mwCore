@@ -7,7 +7,7 @@ PIXEL_TO_METERS = 0.000265
 
 ##### General Flags #####
 PROFILING = False
-SCREEN_CONNECTED = True
+SCREEN_CONNECTED = False
 
 ##### Paths and Ports #####
 P_CONFIG_PATH = "./config_cases/our_config_8.5m.cfg"

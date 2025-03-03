@@ -105,24 +105,24 @@ def define_CNN_3D(in_shape, n_keypoints):
     )
     return model
 
-
+dataset_root = "./dataset"
 # Repeat i iteration to get the average result
 for i in range(10):
     featuremap_train = np.load(
-        f"./drive/MyDrive/formatted/mmWave/{i}/training_mmWave.npy"
+        f"{dataset_root}/formatted/mmWave/{i}/training_mmWave.npy"
     )
     featuremap_validate = np.load(
-        f"./drive/MyDrive/formatted/mmWave/{i}/validate_mmWave.npy"
+        f"{dataset_root}/formatted/mmWave/{i}/validate_mmWave.npy"
     )
     featuremap_test = np.load(
-        f"./drive/MyDrive/formatted/mmWave/{i}/testing_mmWave.npy"
+        f"{dataset_root}/formatted/mmWave/{i}/testing_mmWave.npy"
     )
 
-    labels_train = np.load(f"./drive/MyDrive/formatted/kinect/{i}/training_labels.npy")
+    labels_train = np.load(f"{dataset_root}/formatted/kinect/{i}/training_labels.npy")
     labels_validate = np.load(
-        f"./drive/MyDrive/formatted/kinect/{i}/validate_labels.npy"
+        f"{dataset_root}/formatted/kinect/{i}/validate_labels.npy"
     )
-    labels_test = np.load(f"./drive/MyDrive/formatted/kinect/{i}/testing_labels.npy")
+    labels_test = np.load(f"{dataset_root}/formatted/kinect/{i}/testing_labels.npy")
 
     # instantiate the model
     keypoint_model = define_CNN_3D(featuremap_train[0].shape, 57)

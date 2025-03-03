@@ -36,9 +36,9 @@ class VisualManager:
         if self.mode:
             self.visual = ScreenAdapter()
         else:
-            self.visual = Visualizer(raw_cloud=False, b_boxes=True, posture=True)
+            self.visual = Visualizer(raw_cloud=False, b_boxes=True, posture=True, groud_truth=True)
 
-    def update(self, trackbuffer, detObj):
+    def update(self, trackbuffer, detObj, gt):
         if const.SCREEN_CONNECTED:
             self.visual.update(trackbuffer)
         else:
@@ -46,6 +46,7 @@ class VisualManager:
             self.visual.update_raw(detObj["x"], detObj["y"], detObj["z"])
             self.visual.update_bb(trackbuffer)
             self.visual.update_posture(trackbuffer.effective_tracks)
+            self.visual.update_gt(gt)
             # plt.savefig(f"./gif/{self.counter}.png")
             # self.counter += 1
             self.visual.draw()
@@ -64,10 +65,10 @@ class Visualizer:
         subplot.invert_xaxis()
         return subplot.scatter([], [], [])
 
-    def __init__(self, raw_cloud=False, b_boxes=False, posture=False):
+    def __init__(self, raw_cloud=False, b_boxes=False, posture=False, groud_truth=False):
         self.dynamic_art = []
         fig = plt.figure()
-        plots_num = sum([raw_cloud, b_boxes, posture])
+        plots_num = sum([raw_cloud, b_boxes, posture, groud_truth])
         plots_index = 1
 
         # Create subplot of raw pointcloud
@@ -140,6 +141,12 @@ class Visualizer:
                 "green",  # FootRight,
                 "blue",  # SpineShoulder
             ]
+            plots_index += 1
+        if groud_truth:
+            self.ax_gt = fig.add_subplot(1, plots_num, plots_index, projection="3d")
+            self.setup_subplot(self.ax_gt)
+            self.gt_scatter = None
+            self.ax_gt.set_title("Ground Truth")
             plots_index += 1
         plt.tight_layout()
         plt.show(block=False)
@@ -261,7 +268,40 @@ class Visualizer:
         # self.ax_bb.set_title(
         #     f"Tracks Number: {len(trackbuffer.effective_tracks)}", loc="left"
         # )
-
+    
+    def update_gt(self, gt):
+        if gt.shape[0] == 1:
+            gt = gt[0]
+            
+        if not hasattr(self, "ax_gt"):
+            return
+        self.ax_gt.clear()
+        self.setup_subplot(self.ax_gt)
+        self.ax_gt.set_title("Ground Truth")
+        reshaped_data = gt.reshape(-1, 3).T.flatten().reshape(3, -1)
+        # for connection in self.connections:
+        #     keypoint_1 = connection[0]
+        #     keypoint_2 = connection[1]
+            
+        #     x_values = [reshaped_data[0][keypoint_1], reshaped_data[0][keypoint_2]]
+        #     z_values = [reshaped_data[1][keypoint_1], reshaped_data[1][keypoint_2]]
+        #     y_values = [reshaped_data[2][keypoint_1], reshaped_data[2][keypoint_2]]
+            
+        #     self.ax_gt.plot(x_values, y_values, z_values, color="black")
+        for keypoint_index in range(len(reshaped_data[0])):
+            color = self.keypoint_colors[keypoint_index]
+            marker = (
+                "o" if keypoint_index != 3 else "s"
+            )
+            self.gt_scatter = self.ax_gt.scatter(
+                reshaped_data[0][keypoint_index],
+                reshaped_data[2][keypoint_index],
+                reshaped_data[1][keypoint_index],
+                c=color,
+                marker=marker,
+                s=100 if keypoint_index == 3 else 50,
+            )
+                
     def update_posture(self, tracks):
         if not hasattr(self, "ax_post"):
             return

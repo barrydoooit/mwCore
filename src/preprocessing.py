@@ -5,6 +5,7 @@ import os
 import csv
 import constants as const
 from tqdm import tqdm
+import debugpy
 from Utils import (
     normalize_data,
     OfflineManager,
@@ -56,6 +57,8 @@ def filter_kinect_frames(pairs, invalid_frames, experiment):
     output_file = os.path.join(
         f"{const.P_PREPROCESS_PATH}{const.P_KINECT_DIR}", f"{experiment}.csv"
     )
+    if not os.path.exists(os.path.dirname(output_file)):
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     invalid_kinect_frames = []
     for inv_frame in invalid_frames:
@@ -141,7 +144,7 @@ def preprocess_dataset():
         output_dir = f"{const.P_PREPROCESS_PATH}{const.P_MMWAVE_DIR}/{experiment}"
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
-        os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
         data_buffer = pd.DataFrame()
         frames_in_cur_file = 0
         cur_file_index = 1
@@ -350,10 +353,15 @@ def format_kinect_to_npy(mode, index):
 
 def format_dataset(index):
     sets = ["training", "validate", "testing"]
-
+    mmwave_path = f"{const.P_FORMATTED_PATH}{const.P_MMWAVE_DIR}"
+    kinect_path = f"{const.P_FORMATTED_PATH}{const.P_KINECT_DIR}"
+    if not os.path.exists(mmwave_path):
+        os.makedirs(mmwave_path)
+    if not os.path.exists(kinect_path):
+        os.makedirs(kinect_path)
     with keep.presenting():
-        os.mkdir(f"{const.P_FORMATTED_PATH}{const.P_MMWAVE_DIR}{index}/")
-        os.mkdir(f"{const.P_FORMATTED_PATH}{const.P_KINECT_DIR}{index}/")
+        os.makedirs(f"{const.P_FORMATTED_PATH}{const.P_MMWAVE_DIR}{index}/", exist_ok=True)
+        os.makedirs(f"{const.P_FORMATTED_PATH}{const.P_KINECT_DIR}{index}/", exist_ok=True)
         for set_mode in sets:
             # Preprocess .csvs into numpy arrays and save them in one file
             format_mmwave_to_npy(set_mode, index)
@@ -375,9 +383,12 @@ def split_sets(prefixes):
     directories = [kinect_directory, mmwave_directory]
 
     for directory in directories:
-        shutil.rmtree(f"{directory}/training")
-        shutil.rmtree(f"{directory}/validate")
-        shutil.rmtree(f"{directory}/testing")
+        if os.path.exists(f"{directory}/training"):
+            shutil.rmtree(f"{directory}/training")
+        if os.path.exists(f"{directory}/validate"):
+            shutil.rmtree(f"{directory}/validate")
+        if os.path.exists(f"{directory}/testing"):
+            shutil.rmtree(f"{directory}/testing")
 
     # validate_prefix, testing_prefix = random_split_sets()
     validate_prefix = prefixes[0]
@@ -457,10 +468,12 @@ sets = [
     [["A4", "B6", "A7"], ["B2", "B5", "B1"]],
 ]
 
-print("Preprocessing:")
-preprocess_dataset()
-
-print("Formatting:")
+# print("Preprocessing:")
+# preprocess_dataset()
+# debugpy.listen(5678)
+# print('Waiting for debugger attach')
+# debugpy.wait_for_client()
+# print("Formatting:")
 for i in tqdm(range(10)):
     split_sets(sets[i])
     format_dataset(i)
