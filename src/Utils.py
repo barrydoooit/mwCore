@@ -1,4 +1,3 @@
-import pandas as pd
 from sklearn.cluster import DBSCAN
 from collections import deque
 import constants as const
@@ -80,20 +79,16 @@ class OfflineManager:
 
     def __init__(self, experiment_path):
         self.experiment_path = experiment_path
-        self.ground_truth_file = os.path.join(experiment_path, "../../../log/kinect", os.path.basename(experiment_path) + ".csv")
-        self.ground_truth_df = pd.read_csv(self.ground_truth_file)
-        # self.ground_truth_file = os.path.join(experiment_path, "../../../formatted/kinect", "0", "testing_labels.npy")
-        # self.ground_truth_arr = np.load(self.ground_truth_file))
         self.frame_count = 0
         self.pointer = [0, 1]
-        self.read_next_frames()
+        # self.read_next_frames()
+        self.read_next_frames2()
 
     def read_next_frames(self):
         """
         Read the next batch of frames from the given experiment file starting from the specified frame number.
         """
         self.pointclouds = {}
-        self.ground_truth = {}
         self.last_frame = None
 
         while len(self.pointclouds) < const.FB_READ_BUFFER_SIZE:
@@ -133,8 +128,6 @@ class OfflineManager:
                                 "peakVal": [coords[4]],
                                 "posix": [coords[5]],
                             }
-                            self.ground_truth[framenum] = self.ground_truth_df.iloc[(self.ground_truth_df.iloc[:, 0] - coords[5]).abs().argsort()[:1], 2:59].to_numpy()
-                            # self.ground_truth[framenum] = self.ground_truth_arr[framenum]
 
                         self.last_frame = framenum
 
@@ -148,6 +141,93 @@ class OfflineManager:
 
             except FileNotFoundError:
                 break
+
+    def read_next_frames2(self):
+        """
+        Read the next batch of frames from the given experiment files starting from the specified frame number. Real data included. Work in progress.
+        """
+        self.pointclouds = {}
+        self.kinect_joints = {}
+        self.last_frame = None
+        frame_count = 0
+        mmwave_path = self.experiment_path.replace("preprocessed/?", "preprocessed/mmWave")
+        kinect_path = self.experiment_path.replace("preprocessed/?", "preprocessedOg/kinect") + ".csv"
+
+        mmwave_file_path = os.path.join(mmwave_path, f"{self.pointer[1]}.csv")
+        try:
+            with open(mmwave_file_path, "r") as mmwave_file:
+                mmwave_csv_reader = csv.reader(mmwave_file)
+                kinect_data = []
+
+                # Read Kinect data once
+                with open(kinect_path, "r") as kinect_file:
+                    kinect_csv_reader = csv.reader(kinect_file)
+                    kinect_data = list(kinect_csv_reader)
+
+                for index, mmwave_row in enumerate(mmwave_csv_reader):
+                    # Pass previously parsed frames
+                    if index < self.pointer[0]:
+                        continue
+
+                    framenum = int(mmwave_row[0])
+                    pointcloud_coords = [
+                        float(mmwave_row[1]),
+                        float(mmwave_row[2]),
+                        float(mmwave_row[3]),
+                        float(mmwave_row[4]),
+                        float(mmwave_row[5]),
+                        int(mmwave_row[6]),
+                    ]
+
+                    frame_index = self.pointer[0] + index
+
+                    # Read only the frames in the specified range
+                    if framenum in self.pointclouds:
+                        # Append coordinates to the existing lists
+                        for key, value in zip(
+                            ["x", "y", "z", "doppler", "peakVal", "posix"], pointcloud_coords
+                        ):
+                            self.pointclouds[framenum][key].append(value)
+                    else:
+                        # If not, create a new dictionary for the framenum
+                        self.pointclouds[framenum] = {
+                            "x": [pointcloud_coords[0]],
+                            "y": [pointcloud_coords[1]],
+                            "z": [pointcloud_coords[2]],
+                            "doppler": [pointcloud_coords[3]],
+                            "peakVal": [pointcloud_coords[4]],
+                            "posix": [pointcloud_coords[5]],
+                        }
+
+                        # Read corresponding Kinect data
+                        if frame_count < len(kinect_data):
+                            kinect_row = kinect_data[frame_count]
+                            # Format (x1, y1, z1, x2, y2, z2, ...)
+                            kinect_coords = [float(kinect_row[i]) for i in range(2, len(kinect_row)-1)]
+                            kinect_coords=np.array(kinect_coords).reshape(-1, 3).T.flatten()
+
+                            if framenum in self.kinect_joints:
+                                self.kinect_joints[framenum].append(kinect_coords)
+                            else:
+                                self.kinect_joints[framenum] = [kinect_coords]
+
+                        frame_count += 1
+
+                    
+
+                    self.last_frame = framenum
+
+                    if len(self.pointclouds) >= const.FB_READ_BUFFER_SIZE:
+                        # Break the loop once const.FB_READ_BUFFER_SIZE frames are read
+                        self.pointer[0] = index + 1
+                        break
+                else:
+                    self.pointer[0] = 0
+                    self.pointer[1] += 1
+
+        except FileNotFoundError:
+            print(f"File not found: {mmwave_file_path} or {kinect_path}")
+
 
     def get_data(self):
         """
@@ -169,9 +249,41 @@ class OfflineManager:
             self.read_next_frames()
 
         if self.frame_count in self.pointclouds:
-            return True, self.frame_count, self.pointclouds[self.frame_count], self.ground_truth[self.frame_count]
+            return True, self.frame_count, self.pointclouds[self.frame_count]
         else:
+            return False, self.frame_count, None
+        
+    def get_data2(self):
+        """
+        Get the data for the current frame. Real data included. Work in progress.
+
+        Returns
+        -------
+        exists : bool
+            True if data for the current frame exists, False otherwise.
+        frame_count : int
+            The count of frames read so far.
+        data : dict or None
+            The point cloud data for the current frame, or None if data for the frame is not available.
+        """
+
+        self.frame_count += 1
+        # If the read buffer is parsed, read more frames from the experiment file
+        if self.frame_count > self.last_frame:
+            self.read_next_frames2()
+
+        if self.frame_count in self.pointclouds:
+            return True, self.frame_count, self.pointclouds[self.frame_count], self.kinect_joints[self.frame_count]
+        else:
+            print(f"Frame {self.frame_count} not found.")
             return False, self.frame_count, None, None
+
+    def get_real_data(self):
+        """
+        Get the real data for the current frame.
+        """
+        current_frame = self.kinect_joints[self.frame_count]
+        return current_frame
 
     def is_finished(self):
         """
@@ -298,6 +410,63 @@ def apply_DBscan(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_
     clusters = list(clustered_points.values())
     return clusters
 
+def apply_DBscan_Birch(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_MIN, birch_threshold=0.5, birch_branching_factor=50):
+    """
+    Apply DBSCAN clustering to a 3D point cloud followed by BIRCH clustering for refinement.
+
+    Parameters
+    ----------
+    pointcloud : array-like
+        The 3D point cloud represented as a list or NumPy array.
+
+    eps : float, optional
+        The maximum distance between two samples for one to be considered as in the neighborhood of the other.
+        Default is const.DB_EPS.
+
+    min_samples : int, optional
+        The number of samples (or total weight) in a neighborhood for a point to be considered as a core point.
+        Default is const.DB_MIN_SAMPLES.
+
+    birch_threshold : float, optional
+        The threshold for the BIRCH clustering. Default is 0.5.
+
+    birch_branching_factor : int, optional
+        The branching factor for the BIRCH clustering. Default is 50.
+
+    Returns
+    -------
+    list
+        A list of clustered point clouds, where each cluster is represented as a list of points.
+    """
+    # Step 1: Apply DBSCAN
+    dbscan = DBSCAN(
+        eps=eps,
+        min_samples=min_samples,
+        metric=altered_EuclideanDist,
+    )
+
+    labels = dbscan.fit_predict(pointcloud)
+
+    # label of -1 means noise so we exclude it
+    filtered_labels = set(labels) - {-1}
+
+    # Assign points to clusters
+    clustered_points = {label: [] for label in filtered_labels}
+    for i, label in enumerate(labels):
+        if label != -1:
+            clustered_points[label].append(pointcloud[i])
+
+    # Step 2: Apply BIRCH to each DBSCAN cluster
+    refined_clusters = []
+    for cluster in clustered_points.values():
+        if len(cluster) > 0:
+            birch = Birch(threshold=birch_threshold, branching_factor=birch_branching_factor)
+            cluster_labels = birch.fit_predict(cluster)
+            unique_labels = set(cluster_labels)
+            for ul in unique_labels:
+                refined_clusters.append([cluster[i] for i in range(len(cluster)) if cluster_labels[i] == ul])
+
+    return refined_clusters
 
 def point_transform_to_standard_axis(input):
     """
@@ -559,6 +728,7 @@ def format_batched_frames(frame_clouds):
 def format_single_frame_mode(
     track_cloud: np.array, mean, std_dev, batch_size, fuse=False
 ):
+    print(f"track_cloud shape: {track_cloud.shape}")
 
     track_cloud[:, 4] = (track_cloud[:, 4] - mean) / std_dev
 

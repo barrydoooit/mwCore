@@ -732,3 +732,37 @@ class TrackBuffer:
             frame_keypoints = model.predict(frame_matrices_array)
             for i, index in enumerate(indexes):
                 self.effective_tracks[index].keypoints = frame_keypoints[i]
+
+    def update_real_posture(self, real_data):
+        """
+        Update the real posture of the target of each track using the real data.
+
+        Parameters
+        ----------
+        real_data : np.array
+            Real data for posture estimation.
+
+        Returns
+        -------
+        An array of tuples containing the centroid and joint 0 of each track. They will be reformatted to (x, y, z) as the coordinate system is like that.
+        """
+        centralValues = []
+        for index, track in enumerate(self.effective_tracks):
+            if index < len(real_data):
+                kinect_coords = real_data[index]
+                track.keypoints = np.array(kinect_coords)
+                reshaped_keypoints = track.keypoints.copy().reshape(3, -1)
+
+                reshaped_keypoints[0] *= -1
+                reshaped_keypoints[0] += track.state.x[0]
+                reshaped_keypoints[2] += track.state.x[1]
+                # print(f"Track {index}: {reshaped_keypoints}")
+                # Swap y and z coordinates to get x, y, z format
+                reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
+                # Calculate the centroid
+                centroid = np.mean(reshaped_keypoints, axis=1)
+                centralValues.append((centroid, reshaped_keypoints[:, 0]))
+                # print(f"Centroid: {centroid}, Joint 0: {reshaped_keypoints[0]}")
+
+        return centralValues
+

@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QApplication
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.patches import Patch
-
+import random
 import constants as const
 from Tracking import TrackBuffer, ClusterTrack
 from Utils import calc_projection_points
@@ -36,9 +36,9 @@ class VisualManager:
         if self.mode:
             self.visual = ScreenAdapter()
         else:
-            self.visual = Visualizer(raw_cloud=False, b_boxes=True, posture=True, groud_truth=True)
+            self.visual = Visualizer(raw_cloud=True, b_boxes=True, posture=True)
 
-    def update(self, trackbuffer, detObj, gt):
+    def update(self, trackbuffer, detObj):
         if const.SCREEN_CONNECTED:
             self.visual.update(trackbuffer)
         else:
@@ -46,7 +46,6 @@ class VisualManager:
             self.visual.update_raw(detObj["x"], detObj["y"], detObj["z"])
             self.visual.update_bb(trackbuffer)
             self.visual.update_posture(trackbuffer.effective_tracks)
-            self.visual.update_gt(gt)
             # plt.savefig(f"./gif/{self.counter}.png")
             # self.counter += 1
             self.visual.draw()
@@ -65,10 +64,11 @@ class Visualizer:
         subplot.invert_xaxis()
         return subplot.scatter([], [], [])
 
-    def __init__(self, raw_cloud=False, b_boxes=False, posture=False, groud_truth=False):
+    def __init__(self, raw_cloud=False, b_boxes=False, posture=False):
         self.dynamic_art = []
+        self.errors = []
         fig = plt.figure()
-        plots_num = sum([raw_cloud, b_boxes, posture, groud_truth])
+        plots_num = sum([raw_cloud, b_boxes, posture])
         plots_index = 1
 
         # Create subplot of raw pointcloud
@@ -141,12 +141,6 @@ class Visualizer:
                 "green",  # FootRight,
                 "blue",  # SpineShoulder
             ]
-            plots_index += 1
-        if groud_truth:
-            self.ax_gt = fig.add_subplot(1, plots_num, plots_index, projection="3d")
-            self.setup_subplot(self.ax_gt)
-            self.gt_scatter = None
-            self.ax_gt.set_title("Ground Truth")
             plots_index += 1
         plt.tight_layout()
         plt.show(block=False)
@@ -268,40 +262,7 @@ class Visualizer:
         # self.ax_bb.set_title(
         #     f"Tracks Number: {len(trackbuffer.effective_tracks)}", loc="left"
         # )
-    
-    def update_gt(self, gt):
-        if gt.shape[0] == 1:
-            gt = gt[0]
-            
-        if not hasattr(self, "ax_gt"):
-            return
-        self.ax_gt.clear()
-        self.setup_subplot(self.ax_gt)
-        self.ax_gt.set_title("Ground Truth")
-        reshaped_data = gt.reshape(-1, 3).T.flatten().reshape(3, -1)
-        # for connection in self.connections:
-        #     keypoint_1 = connection[0]
-        #     keypoint_2 = connection[1]
-            
-        #     x_values = [reshaped_data[0][keypoint_1], reshaped_data[0][keypoint_2]]
-        #     z_values = [reshaped_data[1][keypoint_1], reshaped_data[1][keypoint_2]]
-        #     y_values = [reshaped_data[2][keypoint_1], reshaped_data[2][keypoint_2]]
-            
-        #     self.ax_gt.plot(x_values, y_values, z_values, color="black")
-        for keypoint_index in range(len(reshaped_data[0])):
-            color = self.keypoint_colors[keypoint_index]
-            marker = (
-                "o" if keypoint_index != 3 else "s"
-            )
-            self.gt_scatter = self.ax_gt.scatter(
-                reshaped_data[0][keypoint_index],
-                reshaped_data[2][keypoint_index],
-                reshaped_data[1][keypoint_index],
-                c=color,
-                marker=marker,
-                s=100 if keypoint_index == 3 else 50,
-            )
-                
+
     def update_posture(self, tracks):
         if not hasattr(self, "ax_post"):
             return
@@ -309,13 +270,17 @@ class Visualizer:
         # NOTE: the keypoints have a shape (num_of_tracks, 19)
         self.ax_post.clear()
         self.setup_subplot(self.ax_post)
-        self.ax_post.set_title("Posture Estimation")
-        for track in tracks:
+        self.ax_post.set_title("Ground truth")
+        for track, i in zip(tracks, range(len(tracks))):
+            # print("Llega así a update", len(track.keypoints))
+            # print(f"Track {i}: {track.keypoints}")
             reshaped_data = track.keypoints.reshape(3, -1)
-
             # Minor check for irrelevant results
-            if np.linalg.norm(reshaped_data[:, 1] - reshaped_data[:, 2]) > 0.5:
+            if np.linalg.norm(reshaped_data[:, 0] - reshaped_data[:, 1]) > 0.5:
+                print("Skipping due to large distance between: ", reshaped_data[:, 0], reshaped_data[:, 1])
+                print("Distance: ", np.linalg.norm(reshaped_data[:, 0] - reshaped_data[:, 1]))
                 continue
+                pass
 
             # Mirror skeleton
             reshaped_data[0] *= -1
@@ -343,8 +308,14 @@ class Visualizer:
                     reshaped_data[1][keypoint_index],
                     c=color,
                     marker=marker,
-                    s=100 if keypoint_index == 3 else 50,  # Larger size for the head
+                    s=20 if keypoint_index == 3 else 5,  # Larger size for the head
                 )
+            # Print the error between track.state.x and reshaped_data[0] below the plot
+            if i == 0:
+                joint_0 = np.array([reshaped_data[0][0], reshaped_data[2][0], reshaped_data[1][0]])
+                error = np.linalg.norm(track.state.x[:3].flatten() - joint_0)
+                self.errors.append(error)
+                self.ax_post.text(0,0,0,f"Error: {error:.2f}",fontdict={"fontsize": 10},color="red")
 
     def draw(self):
         plt.draw()
