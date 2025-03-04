@@ -79,6 +79,7 @@ class OfflineManager:
 
     def __init__(self, experiment_path):
         self.experiment_path = experiment_path
+        
         self.frame_count = 0
         self.pointer = [0, 1]
         # self.read_next_frames()
@@ -151,7 +152,7 @@ class OfflineManager:
         self.last_frame = None
         frame_count = 0
         mmwave_path = self.experiment_path.replace("preprocessed/?", "preprocessed/mmWave")
-        kinect_path = self.experiment_path.replace("preprocessed/?", "preprocessedOg/kinect") + ".csv"
+        kinect_path = self.experiment_path.replace("preprocessed/?", "preprocessed/kinect") + ".csv"
 
         mmwave_file_path = os.path.join(mmwave_path, f"{self.pointer[1]}.csv")
         try:
@@ -201,15 +202,13 @@ class OfflineManager:
 
                         # Read corresponding Kinect data
                         if frame_count < len(kinect_data):
-                            kinect_row = kinect_data[frame_count]
+                            # kinect_row = kinect_data[frame_count]
+                            closest_row = min(kinect_data, key=lambda row: abs(float(row[0]) - pointcloud_coords[5]))
                             # Format (x1, y1, z1, x2, y2, z2, ...)
-                            kinect_coords = [float(kinect_row[i]) for i in range(2, len(kinect_row)-1)]
+                            kinect_coords = [float(closest_row[i]) for i in range(2, len(closest_row)-1)]
                             kinect_coords=np.array(kinect_coords).reshape(-1, 3).T.flatten()
 
-                            if framenum in self.kinect_joints:
-                                self.kinect_joints[framenum].append(kinect_coords)
-                            else:
-                                self.kinect_joints[framenum] = [kinect_coords]
+                            self.kinect_joints[framenum] = [kinect_coords]
 
                         frame_count += 1
 

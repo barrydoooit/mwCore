@@ -6,7 +6,7 @@ from wakepy import keep
 import constants as const
 from Visualizer import VisualManager
 from Utils import OfflineManager, normalize_data
-# from keras.models import load_model
+from keras.models import load_model
 import numpy as np
 import time 
 from Tracking import (
@@ -16,7 +16,7 @@ from Tracking import (
 
 ########### Set the experiment path here ############
 
-EXPERIMENT_PATH = "src/asterios/dataset/preprocessed/?/B25"
+EXPERIMENT_PATH = "src/asterios_mars_reproduce/dataset/preprocessed/?/B25"
 
 #####################################################
 
@@ -32,7 +32,7 @@ def offline_main():
 
     visual = VisualManager()
     trackbuffer = TrackBuffer()
-    # model = load_model(const.P_MODEL_PATH)
+    model = load_model(const.P_MODEL_PATH)
     batch = BatchedData()
     first_iter = [True]  # Use a list to make it mutable
     accumulated_errors = {
@@ -83,7 +83,7 @@ def offline_main():
                         # Posture Estimation module
                         
         
-                        # trackbuffer.estimate_posture(model)
+                        trackbuffer.estimate_posture(model)
                         # if len(trackbuffer.effective_tracks) > 0:
                         #     print("Estimated posture: ", trackbuffer.effective_tracks[0].keypoints)
                         centralValues=trackbuffer.update_real_posture(kinectJoints)
@@ -95,7 +95,7 @@ def offline_main():
                                 error = np.linalg.norm(joint0 - track.state.x[:3].flatten())
                                 accumulated_errors["joint0"].append(error)
 
-                    visual.update(trackbuffer, detObj)
+                    visual.update(trackbuffer, detObj, ground_truth=True)
 
                 # Schedule the next call to control_loop
                 QTimer.singleShot(0, control_loop)

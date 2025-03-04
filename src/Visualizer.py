@@ -36,9 +36,9 @@ class VisualManager:
         if self.mode:
             self.visual = ScreenAdapter()
         else:
-            self.visual = Visualizer(raw_cloud=True, b_boxes=True, posture=True)
+            self.visual = Visualizer(raw_cloud=True, b_boxes=True, posture=True, ground_truth=True)
 
-    def update(self, trackbuffer, detObj):
+    def update(self, trackbuffer, detObj, ground_truth):
         if const.SCREEN_CONNECTED:
             self.visual.update(trackbuffer)
         else:
@@ -46,6 +46,9 @@ class VisualManager:
             self.visual.update_raw(detObj["x"], detObj["y"], detObj["z"])
             self.visual.update_bb(trackbuffer)
             self.visual.update_posture(trackbuffer.effective_tracks)
+            if ground_truth:
+                self.visual.update_posture(trackbuffer.effective_tracks, True)
+            self.visual.draw()
             # plt.savefig(f"./gif/{self.counter}.png")
             # self.counter += 1
             self.visual.draw()
@@ -64,11 +67,11 @@ class Visualizer:
         subplot.invert_xaxis()
         return subplot.scatter([], [], [])
 
-    def __init__(self, raw_cloud=False, b_boxes=False, posture=False):
+    def __init__(self, raw_cloud=False, b_boxes=False, posture=False, ground_truth=False):
         self.dynamic_art = []
         self.errors = []
         fig = plt.figure()
-        plots_num = sum([raw_cloud, b_boxes, posture])
+        plots_num = sum([raw_cloud, b_boxes, posture, ground_truth])
         plots_index = 1
 
         # Create subplot of raw pointcloud
@@ -95,6 +98,7 @@ class Visualizer:
         if posture:
             self.ax_post = fig.add_subplot(1, plots_num, plots_index, projection="3d")
             self.setup_subplot(self.ax_post)
+            self.ax_post.set_title("Posture Estimation")
             self.post_scatter = None
 
             # Define connections and keypoints
@@ -142,6 +146,15 @@ class Visualizer:
                 "blue",  # SpineShoulder
             ]
             plots_index += 1
+
+
+        if ground_truth:
+            self.ax_gt = fig.add_subplot(1, plots_num, plots_index, projection="3d")
+            self.setup_subplot(self.ax_gt)
+            self.gt_scatter = None
+            self.ax_gt.set_title("Ground truth")
+            plots_index += 1
+
         plt.tight_layout()
         plt.show(block=False)
 
@@ -263,18 +276,19 @@ class Visualizer:
         #     f"Tracks Number: {len(trackbuffer.effective_tracks)}", loc="left"
         # )
 
-    def update_posture(self, tracks):
-        if not hasattr(self, "ax_post"):
+    def update_posture(self, tracks, ground_truth=False):
+        if not hasattr(self, "ax_post") and not hasattr(self, "ax_gt"):
             return
-
+        ax_to_use = self.ax_gt if ground_truth else self.ax_post
+        scatter_to_use = self.gt_scatter if ground_truth else self.post_scatter
         # NOTE: the keypoints have a shape (num_of_tracks, 19)
-        self.ax_post.clear()
-        self.setup_subplot(self.ax_post)
-        self.ax_post.set_title("Ground truth")
+        ax_to_use.clear()
+        self.setup_subplot(ax_to_use)
+        ax_to_use.set_title("Ground Truth" if ground_truth else "Posture Estimation")
         for track, i in zip(tracks, range(len(tracks))):
             # print("Llega así a update", len(track.keypoints))
             # print(f"Track {i}: {track.keypoints}")
-            reshaped_data = track.keypoints.reshape(3, -1)
+            reshaped_data = track.keypoints.reshape(3, -1) if not ground_truth else track.ground_truth.reshape(3, -1)
             # Minor check for irrelevant results
             if np.linalg.norm(reshaped_data[:, 0] - reshaped_data[:, 1]) > 0.5:
                 print("Skipping due to large distance between: ", reshaped_data[:, 0], reshaped_data[:, 1])
@@ -295,14 +309,14 @@ class Visualizer:
                 z_values = [reshaped_data[1][keypoint_1], reshaped_data[1][keypoint_2]]
                 y_values = [reshaped_data[2][keypoint_1], reshaped_data[2][keypoint_2]]
 
-                self.ax_post.plot(x_values, y_values, z_values, color="black")
+                ax_to_use.plot(x_values, y_values, z_values, color="black")
 
             for keypoint_index in range(len(reshaped_data[0])):
                 color = self.keypoint_colors[keypoint_index]
                 marker = (
                     "o" if keypoint_index != 3 else "s"
                 )  # Use square marker for the head
-                self.post_scatter = self.ax_post.scatter(
+                scatter_to_use = ax_to_use.scatter(
                     reshaped_data[0][keypoint_index],
                     reshaped_data[2][keypoint_index],
                     reshaped_data[1][keypoint_index],
@@ -311,11 +325,12 @@ class Visualizer:
                     s=20 if keypoint_index == 3 else 5,  # Larger size for the head
                 )
             # Print the error between track.state.x and reshaped_data[0] below the plot
-            if i == 0:
+            if i == 0 and ground_truth:
                 joint_0 = np.array([reshaped_data[0][0], reshaped_data[2][0], reshaped_data[1][0]])
                 error = np.linalg.norm(track.state.x[:3].flatten() - joint_0)
                 self.errors.append(error)
-                self.ax_post.text(0,0,0,f"Error: {error:.2f}",fontdict={"fontsize": 10},color="red")
+                ax_to_use.text(0,0,0,f"Error: {error:.2f}",fontdict={"fontsize": 10},color="red")
+
 
     def draw(self):
         plt.draw()

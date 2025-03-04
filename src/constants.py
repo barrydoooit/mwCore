@@ -11,8 +11,8 @@ SCREEN_CONNECTED = False
 
 ##### Paths and Ports #####
 P_CONFIG_PATH = "../../config_cases/harvyConfig2.cfg"
-P_MODEL_PATH = "src/asterios/model/trained_model_barry.h5"
-P_DATA_PATH = "src/asterios/dataset"
+P_MODEL_PATH = "src/asterios_mars_reproduce/model/trained_model_barry.h5"
+P_DATA_PATH = "src/asterios_mars_reproduce/dataset"
 
 P_LOG_PATH = f"{P_DATA_PATH}/log"
 P_PREPROCESS_PATH = f"{P_DATA_PATH}/preprocessed"
@@ -45,7 +45,7 @@ S_TILT = -5  # Sensor Tilt: (-180, 180)
 # Plot Parameters
 V_SCALLING = 1  # Scaling parameter (only for emulating)
 
-V_3D_AXIS = [[-1, 1], [0, 4], [-1, 2]]
+V_3D_AXIS = [[-1, 1], [0, 4], [0, 2]]
 V_SCREEN_FADE_SIZE_MAX: float = 0.3
 V_SCREEN_FADE_SIZE_MIN: float = 0.2
 V_SCREEN_FADE_WEIGHT: float = (

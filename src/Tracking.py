@@ -750,8 +750,8 @@ class TrackBuffer:
         for index, track in enumerate(self.effective_tracks):
             if index < len(real_data):
                 kinect_coords = real_data[index]
-                track.keypoints = np.array(kinect_coords)
-                reshaped_keypoints = track.keypoints.copy().reshape(3, -1)
+                track.ground_truth = np.array(kinect_coords)
+                reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
 
                 reshaped_keypoints[0] *= -1
                 reshaped_keypoints[0] += track.state.x[0]
