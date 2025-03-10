@@ -12,7 +12,7 @@ from keras.models import load_model
 from Utils import (
     normalize_data,
 )
-from Tracking import (
+from tracking.AsteriosTracking import (
     TrackBuffer,
     BatchedData,
 )

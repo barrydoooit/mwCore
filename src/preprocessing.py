@@ -13,7 +13,7 @@ from Utils import (
     relative_coordinates,
     format_batched_frames,
 )
-from Tracking import (
+from tracking.AsteriosTracking import (
     TrackBuffer,
     BatchedData,
 )
@@ -22,7 +22,7 @@ from wakepy import keep
 # Dataset capturing environment setup offsets
 KINECT_Z = 0.8
 KINECT_X = 0.22
-RELATIVE_ENABLED = True
+RELATIVE_ENABLED = False
 
 
 def pair(experiment):
@@ -204,48 +204,48 @@ def preprocess_dataset():
                                     #     ].cluster.centroid[:2]
                                     # )
 
-                                final_frames = format_batched_frames(frames_to_process)
+                                # final_frames = format_batched_frames(frames_to_process)
 
-                                # Save effective data in a .csv
-                                data = {
-                                    "Frame": framenum,
-                                    "X": final_frames[:, 0],
-                                    "Y": final_frames[:, 1],
-                                    "Z": final_frames[:, 2],
-                                    "Doppler": final_frames[:, 3],
-                                    "Intensity": final_frames[:, 4],
-                                }
+                                # # Save effective data in a .csv
+                                # data = {
+                                #     "Frame": framenum,
+                                #     "X": final_frames[:, 0],
+                                #     "Y": final_frames[:, 1],
+                                #     "Z": final_frames[:, 2],
+                                #     "Doppler": final_frames[:, 3],
+                                #     "Intensity": final_frames[:, 4],
+                                # }
 
                                 # Store data in the data path
-                                df = pd.DataFrame(data)
-                                data_buffer = pd.concat(
-                                    [data_buffer, df], ignore_index=True
-                                )
-                                frames_in_cur_file += 1
+                                # df = pd.DataFrame(data)
+                                # data_buffer = pd.concat(
+                                #     [data_buffer, df], ignore_index=True
+                                # )
+                                # frames_in_cur_file += 1
 
-                                # Check if buffer size or file size limit is reached
-                                if (
-                                    len(data_buffer) >= const.FB_WRITE_BUFFER_SIZE
-                                    or frames_in_cur_file
-                                    >= const.FB_EXPERIMENT_FILE_SIZE
-                                ):
-                                    # Write data to CSV
-                                    df = pd.DataFrame(data_buffer)
-                                    df.to_csv(
-                                        cur_file, mode="a", index=False, header=False
-                                    )
-                                    data_buffer.drop(data_buffer.index, inplace=True)
+                                # # Check if buffer size or file size limit is reached
+                                # if (
+                                #     len(data_buffer) >= const.FB_WRITE_BUFFER_SIZE
+                                #     or frames_in_cur_file
+                                #     >= const.FB_EXPERIMENT_FILE_SIZE
+                                # ):
+                                #     # Write data to CSV
+                                #     df = pd.DataFrame(data_buffer)
+                                #     df.to_csv(
+                                #         cur_file, mode="a", index=False, header=False
+                                #     )
+                                #     data_buffer.drop(data_buffer.index, inplace=True)
 
-                                    # Update file index and file path if necessary
-                                    if (
-                                        frames_in_cur_file
-                                        >= const.FB_EXPERIMENT_FILE_SIZE
-                                    ):
-                                        frames_in_cur_file = 0
-                                        cur_file_index += 1
-                                        cur_file = os.path.join(
-                                            output_dir, f"{cur_file_index}.csv"
-                                        )
+                                #     # Update file index and file path if necessary
+                                #     if (
+                                #         frames_in_cur_file
+                                #         >= const.FB_EXPERIMENT_FILE_SIZE
+                                #     ):
+                                #         frames_in_cur_file = 0
+                                #         cur_file_index += 1
+                                #         cur_file = os.path.join(
+                                #             output_dir, f"{cur_file_index}.csv"
+                                #         )
 
                 else:
                     batch.pop_frame()
@@ -468,12 +468,12 @@ sets = [
     [["A4", "B6", "A7"], ["B2", "B5", "B1"]],
 ]
 
-# print("Preprocessing:")
-# preprocess_dataset()
+print("Preprocessing:")
+preprocess_dataset()
 # debugpy.listen(5678)
 # print('Waiting for debugger attach')
 # debugpy.wait_for_client()
 # print("Formatting:")
-for i in tqdm(range(10)):
-    split_sets(sets[i])
-    format_dataset(i)
+# for i in tqdm(range(10)):
+#     split_sets(sets[i])
+#     format_dataset(i)

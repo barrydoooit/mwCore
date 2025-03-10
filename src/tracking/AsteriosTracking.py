@@ -4,12 +4,13 @@ import math
 import time
 from filterpy.kalman import KalmanFilter
 from Utils import (
-    apply_DBscan,
+    apply_clustering,
     RingBuffer,
     relative_coordinates,
     format_single_frame,
 )
 from typing import List
+from abc import ABC, abstractmethod
 
 ACTIVE = 1
 INACTIVE = 0
@@ -117,7 +118,7 @@ class PointCluster:
 
     """
 
-    def __init__(self, pointcloud: np.array):
+    def __init__(self, pointcloud: np.array, polar=False):
         """
         Initialize PointCluster with a given pointcloud.
         """
@@ -129,7 +130,17 @@ class PointCluster:
         self.min_vals = np.min(pointcloud[:, :6], axis=0)
         self.max_vals = np.max(pointcloud[:, :6], axis=0)
 
-        if math.sqrt(np.sum((self.centroid[3:6] ** 2))) < const.TR_VEL_THRES:
+        velocity = math.sqrt(np.sum((self.centroid[3:6] ** 2)))
+
+        # Last 3 values are radial measurements (r, θ, ṙ)
+        if polar:
+            # Compute centroid in polar coordinates (r, θ, ṙ)
+            self.centroid = np.mean(pointcloud[:, -3:], axis=0)  # Last 3 elements are [r, θ, ṙ]
+            self.min_vals = np.min(pointcloud[:, -3:], axis=0)
+            self.max_vals = np.max(pointcloud[:, -3:], axis=0)
+
+
+        if velocity < const.TR_VEL_THRES:
             # if pointcloud[6] < const.TR_VEL_THRES:
             self.status = STATIC
         else:
@@ -329,10 +340,6 @@ class ClusterTrack:
         4. Estimates the spread of measurements in the cluster.
         5. Estimates the dispersion matrix of the point groups in the cluster.
 
-        Parameters
-        ----------
-        pointcloud : np.array
-            2D NumPy array representing the point cloud.
         """
         self.cluster = PointCluster(pointcloud)
         self.batch.add_frame(self.cluster.pointcloud)
@@ -448,7 +455,20 @@ class ClusterTrack:
         return new_track_clusters
 
 
-class TrackBuffer:
+class Tracker(ABC):
+    @abstractmethod
+    def track(self, pointcloud, batch, clusteringAlgorithm="DBSCAN"):
+        pass
+
+    @abstractmethod
+    def estimate_posture(self, model):
+        pass
+
+    @abstractmethod
+    def update_real_posture(self, real_data):
+        pass
+
+class TrackBuffer(Tracker):
     """
     A class representing a buffer for managing and updating the multiple ClusterTracks of the scene.
 
@@ -647,8 +667,10 @@ class TrackBuffer:
 
         for j, track in enumerate(self.effective_tracks):
             if len(clouds[j]) == 0:
+                # If no points are associated with the track, just update the lifetime
                 track.update_lifetime(dt=self.dt)
             else:
+                # If points are associated with the track, update the lifetime and associate the pointcloud
                 track.update_lifetime(dt=self.dt, reset=True)
                 track.associate_pointcloud(np.array(clouds[j]))
 
@@ -661,7 +683,7 @@ class TrackBuffer:
 
         return unassigned
 
-    def track(self, pointcloud, batch: BatchedData):
+    def track(self, pointcloud, batch: BatchedData, clusteringAlgorithm="DBSCAN"):
         """
         Perform the tracking process including prediction, association, maintenance, update, and clustering.
 
@@ -671,12 +693,16 @@ class TrackBuffer:
             Pointcloud data.
         batch : BatchedData
             BatchedData instance for managing frames.
-
+        clusteringAlgorithm : str
+            Clustering algorithm to be used. Default is DBSCAN. Accepted values are "DBSCAN", "BIRCH", or "both".
         Returns
         -------
         None
         """
-        # Prediction Step
+        if (clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]):
+            raise ValueError("Invalid clustering algorithm. Please use 'DBSCAN', 'BIRCH', or 'both'.")
+
+        # Prediction Step. This modifies only the kalman state of the tracks
         self._predict_all()
 
         # Association Step
@@ -690,12 +716,10 @@ class TrackBuffer:
         new_clusters = []
         batch.add_frame(unassigned)
 
-        if (
-            len(batch.effective_data) > 0
-            and len(self.effective_tracks) < const.TR_MAX_TRACKS
-        ):
-            new_clusters = apply_DBscan(batch.effective_data)
-
+        if (len(batch.effective_data) > 0 and len(self.effective_tracks) < const.TR_MAX_TRACKS):
+            new_clusters = apply_clustering(
+                batch.effective_data, clusteringAlgorithm
+            )
             if len(new_clusters) > 0:
                 batch.clear()
 
@@ -748,21 +772,24 @@ class TrackBuffer:
         """
         centralValues = []
         for index, track in enumerate(self.effective_tracks):
-            if index < len(real_data):
+            try:
                 kinect_coords = real_data[index]
-                track.ground_truth = np.array(kinect_coords)
-                reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
+              
+            except:
+                print("Warning. No more than one skeleton detected, showing the same skeleton for all tracks. ", time.time())
+                kinect_coords = real_data[0]
+            track.ground_truth = np.array(kinect_coords)
+            reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
 
-                reshaped_keypoints[0] *= -1
-                reshaped_keypoints[0] += track.state.x[0]
-                reshaped_keypoints[2] += track.state.x[1]
-                # print(f"Track {index}: {reshaped_keypoints}")
-                # Swap y and z coordinates to get x, y, z format
-                reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
-                # Calculate the centroid
-                centroid = np.mean(reshaped_keypoints, axis=1)
-                centralValues.append((centroid, reshaped_keypoints[:, 0]))
-                # print(f"Centroid: {centroid}, Joint 0: {reshaped_keypoints[0]}")
-
+            reshaped_keypoints[0] *= -1
+            # reshaped_keypoints[0] += track.state.x[0]
+            # reshaped_keypoints[2] += track.state.x[1]
+            # print(f"Track {index}: {reshaped_keypoints}")
+            # Swap y and z coordinates to get x, y, z format
+            reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
+            # Calculate the centroid
+            centroid = np.mean(reshaped_keypoints, axis=1)
+            centralValues.append((centroid, reshaped_keypoints[:, 0]))
+            # print(f"Centroid: {centroid}, Joint 0: {reshaped_keypoints[0]}")
         return centralValues
 

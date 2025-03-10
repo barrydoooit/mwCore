@@ -6,3 +6,5 @@
 **/demos
 .vscode
 log**
+
+errors/

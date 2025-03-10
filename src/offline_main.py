@@ -5,18 +5,21 @@ from PyQt5.QtCore import QTimer
 from wakepy import keep
 import constants as const
 from Visualizer import VisualManager
-from Utils import OfflineManager, normalize_data
+from Utils import OfflineManager, normalize_data, polar_to_cartesian
 from keras.models import load_model
 import numpy as np
 import time 
-from Tracking import (
+from tracking.AsteriosTracking import (
     TrackBuffer,
     BatchedData,
 )
+from tracking.GTrack import GTrackBuffer
+from tracking.RKFTracking import RKFTrackBuffer
+import pandas as pd
 
 ########### Set the experiment path here ############
 
-EXPERIMENT_PATH = "src/asterios_mars_reproduce/dataset/preprocessed/?/B25"
+EXPERIMENT_PATH = "src/asterios_mars_reproduce/dataset/preprocessed/?/A65"
 
 #####################################################
 
@@ -30,24 +33,33 @@ def offline_main():
 
     app = QApplication(sys.argv)
 
-    visual = VisualManager()
-    trackbuffer = TrackBuffer()
+    visual = VisualManager(polar=False) # Change to True for polar
+    trackbuffer =TrackBuffer()
     model = load_model(const.P_MODEL_PATH)
-    batch = BatchedData()
-    first_iter = [True]  # Use a list to make it mutable
+    batch = BatchedData(np.empty((0, 8))) #Change to 11 for polar
+    first_iter = [True]  
     accumulated_errors = {
         "joint0": [],
         "centroid": [],
     }
+    timeToTrack = []
+    frames = 0
     
     def cleanup():
         visual.visual.clear()
         # Compute and display the average error
         if accumulated_errors:
-            average_error = {
-                key: np.median(errors) for key, errors in accumulated_errors.items()
-            }
-            print(f"Median errors: {average_error}")
+            stats = {key: (np.median(errors), np.max(errors), np.min(errors)) for key, errors in accumulated_errors.items()}
+            print(f"Max errors: { {key: max for key, (_, max, _) in stats.items()} }")
+            print(f"Min errors: { {key: min for key, (_, _, min) in stats.items()} }")
+            print(f"Median errors: { {key: median for key, (median, _, _) in stats.items()} }")
+            print(f"Median tracking time: {np.median(timeToTrack)} ms")
+            # Save it to a file
+            df = pd.DataFrame(accumulated_errors)
+            df_time = pd.DataFrame({'timeToTrack': timeToTrack})
+            df_combined = pd.concat([df, df_time], axis=1)
+            # df_combined.to_csv("src/asterios_mars_reproduce/errors/AsteriosTrackNoZ.csv", index=False)
+                
             # print("Visualizer error: ", np.mean(visual.visual.errors))
         else:
             print("No errors accumulated.")
@@ -57,12 +69,14 @@ def offline_main():
     app.aboutToQuit.connect(cleanup)
 
     def control_loop():
-        errors = 0
+        nonlocal frames 
 
         if not sensor_data.is_finished():
             try:
                 dataOk, _, detObj, kinectJoints = sensor_data.get_data2()
-
+                frames += 1
+                time_start = 0
+                time_end = 0
                 if dataOk:
                     if first_iter[0]:  # Access the mutable value
                         trackbuffer.dt = SLEEPTIME
@@ -72,33 +86,52 @@ def offline_main():
 
                     trackbuffer.t = detObj["posix"][0] / 1000
                     # Apply scene constraints, point translation and axis normalization
-                    effective_data = normalize_data(detObj)
+                    effective_data = normalize_data(detObj, keepRadial=False) # Change to True for polar
 
                     if effective_data.shape[0] != 0:
                         # Tracking module
-                        # time_start = time.time()
-                        trackbuffer.track(effective_data, batch)
-                        # time_end = time.time()
-                        # print("Tracking time: ", (time_end - time_start) * 1000, "ms")
+                        time_start = time.time()
+                        trackbuffer.track(effective_data, batch, clusteringAlgorithm="DBSCAN")
+                        time_end = time.time()
+                        timeToTrack.append((time_end - time_start) * 1000)
                         # Posture Estimation module
                         
         
-                        trackbuffer.estimate_posture(model)
+                        # trackbuffer.estimate_posture(model)
                         # if len(trackbuffer.effective_tracks) > 0:
                         #     print("Estimated posture: ", trackbuffer.effective_tracks[0].keypoints)
                         centralValues=trackbuffer.update_real_posture(kinectJoints)
                         
                         for centroid, joint0 in centralValues:
                             for track in trackbuffer.effective_tracks:
-                                error = np.linalg.norm(centroid - track.state.x[:3].flatten())
+                                # error = np.linalg.norm(centroid - track.state.x[:3].flatten())
+                                # accumulated_errors["centroid"].append(error)
+                                # error = np.linalg.norm(joint0 - track.state.x[:3].flatten())
+                                # accumulated_errors["joint0"].append(error)
+
+                                # state_cartesian = polar_to_cartesian(track.state.x.flatten())
+                                # state_position = state_cartesian[:2]  # [x, y]
+                                # error_centroid = np.linalg.norm(centroid[:2] - state_position)
+                                # accumulated_errors["centroid"].append(error_centroid)
+                                # error_joint0 = np.linalg.norm(joint0[:2] - state_position)
+                                # accumulated_errors["joint0"].append(error_joint0)
+
+                                error = np.linalg.norm(centroid[:2] - track.state.x[:2].flatten())
                                 accumulated_errors["centroid"].append(error)
-                                error = np.linalg.norm(joint0 - track.state.x[:3].flatten())
+                                error = np.linalg.norm(joint0[:2] - track.state.x[:2].flatten())
                                 accumulated_errors["joint0"].append(error)
 
                     visual.update(trackbuffer, detObj, ground_truth=True)
+                if frames % 10 == 0:
+                    print(f"Frame: {frames}")
+                    print("Tracking time: ", (time_end - time_start) * 1000, "ms")
 
-                # Schedule the next call to control_loop
-                QTimer.singleShot(0, control_loop)
+                if frames >= 1000:
+                    cleanup()
+                else:
+                  QTimer.singleShot(0, control_loop)
+
+
             except KeyboardInterrupt:
                 cleanup()
         else:

@@ -1,4 +1,4 @@
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, Birch
 from collections import deque
 import constants as const
 import math
@@ -151,8 +151,8 @@ class OfflineManager:
         self.kinect_joints = {}
         self.last_frame = None
         frame_count = 0
-        mmwave_path = self.experiment_path.replace("preprocessed/?", "preprocessed/mmWave")
-        kinect_path = self.experiment_path.replace("preprocessed/?", "preprocessed/kinect") + ".csv"
+        mmwave_path = self.experiment_path.replace("preprocessed/?", "log/mmWave")
+        kinect_path = self.experiment_path.replace("preprocessed/?", "preprocessedNoStatic/kinect") + ".csv"
 
         mmwave_file_path = os.path.join(mmwave_path, f"{self.pointer[1]}.csv")
         try:
@@ -200,14 +200,16 @@ class OfflineManager:
                             "posix": [pointcloud_coords[5]],
                         }
 
-                        # Read corresponding Kinect data
-                        if frame_count < len(kinect_data):
-                            # kinect_row = kinect_data[frame_count]
-                            closest_row = min(kinect_data, key=lambda row: abs(float(row[0]) - pointcloud_coords[5]))
-                            # Format (x1, y1, z1, x2, y2, z2, ...)
-                            kinect_coords = [float(closest_row[i]) for i in range(2, len(closest_row)-1)]
-                            kinect_coords=np.array(kinect_coords).reshape(-1, 3).T.flatten()
+                        # Read corresponding Kinect data:
+                        # kinect_row = kinect_data[frame_count]
+                        closest_row = min(kinect_data, key=lambda row: abs(float(row[0]) - pointcloud_coords[5]))
+                        # Format (x1, y1, z1, x2, y2, z2, ...)
+                        kinect_coords = [float(closest_row[i]) for i in range(2, len(closest_row)-1)]
+                        kinect_coords=np.array(kinect_coords).reshape(-1, 3).T.flatten()
 
+                        if framenum in self.kinect_joints:
+                            self.kinect_joints[framenum].append(kinect_coords)
+                        else:
                             self.kinect_joints[framenum] = [kinect_coords]
 
                         frame_count += 1
@@ -366,7 +368,7 @@ def altered_EuclideanDist(p1, p2):
     )
 
 
-def apply_DBscan(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_MIN):
+def apply_DBscan(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_MIN, metric=altered_EuclideanDist):
     """
     Apply DBSCAN clustering to a 3D point cloud using an altered Euclidean distance metric.
 
@@ -409,42 +411,34 @@ def apply_DBscan(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_
     clusters = list(clustered_points.values())
     return clusters
 
-def apply_DBscan_Birch(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_MIN, birch_threshold=0.5, birch_branching_factor=50):
+def apply_Birch(pointcloud, threshold=4, branching_factor=10):
     """
-    Apply DBSCAN clustering to a 3D point cloud followed by BIRCH clustering for refinement.
+    Apply BIRCH clustering to a 3D point cloud.
 
     Parameters
     ----------
     pointcloud : array-like
         The 3D point cloud represented as a list or NumPy array.
 
-    eps : float, optional
-        The maximum distance between two samples for one to be considered as in the neighborhood of the other.
-        Default is const.DB_EPS.
+    threshold : float, optional
+        The radius of the sub-cluster obtained by merging a new sample and the closest sub-cluster.
+        Default is 
 
-    min_samples : int, optional
-        The number of samples (or total weight) in a neighborhood for a point to be considered as a core point.
-        Default is const.DB_MIN_SAMPLES.
-
-    birch_threshold : float, optional
-        The threshold for the BIRCH clustering. Default is 0.5.
-
-    birch_branching_factor : int, optional
-        The branching factor for the BIRCH clustering. Default is 50.
+    branching_factor : int, optional
+        Maximum number of CF sub-clusters in each node.
+        Default is
 
     Returns
     -------
     list
         A list of clustered point clouds, where each cluster is represented as a list of points.
     """
-    # Step 1: Apply DBSCAN
-    dbscan = DBSCAN(
-        eps=eps,
-        min_samples=min_samples,
-        metric=altered_EuclideanDist,
-    )
-
-    labels = dbscan.fit_predict(pointcloud)
+    if len(pointcloud) < 35:
+        # Not enough points to form clusters
+        return []
+    
+    birch = Birch(threshold=threshold, branching_factor=branching_factor, n_clusters=1)
+    labels = birch.fit_predict(pointcloud)
 
     # label of -1 means noise so we exclude it
     filtered_labels = set(labels) - {-1}
@@ -455,17 +449,34 @@ def apply_DBscan_Birch(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SA
         if label != -1:
             clustered_points[label].append(pointcloud[i])
 
-    # Step 2: Apply BIRCH to each DBSCAN cluster
-    refined_clusters = []
-    for cluster in clustered_points.values():
-        if len(cluster) > 0:
-            birch = Birch(threshold=birch_threshold, branching_factor=birch_branching_factor)
-            cluster_labels = birch.fit_predict(cluster)
-            unique_labels = set(cluster_labels)
-            for ul in unique_labels:
-                refined_clusters.append([cluster[i] for i in range(len(cluster)) if cluster_labels[i] == ul])
+    # Return a list of clustered pointclouds
+    clusters = list(clustered_points.values())
+    return clusters
 
-    return refined_clusters
+def apply_clustering(pointcloud, method="DBSCAN", metric=altered_EuclideanDist):
+    """
+    Apply a clustering algorithm to a 3D point cloud.
+
+    Parameters
+    ----------
+    pointcloud : array-like
+        The 3D point cloud represented as a list or NumPy array.
+
+    method : str, optional
+        The clustering algorithm to use. Supported methods are "DBSCAN" and "BIRCH".
+        Default is "DBSCAN".
+
+    Returns
+    -------
+    list
+        A list of clustered point clouds, where each cluster is represented as a list of points.
+    """
+    if method == "DBSCAN":
+        return apply_DBscan(pointcloud, metric=metric)
+    elif method == "BIRCH":
+        return apply_Birch(pointcloud)
+    else:
+        raise ValueError(f"Clustering method '{method}' is not supported.")
 
 def point_transform_to_standard_axis(input):
     """
@@ -515,7 +526,7 @@ def point_transform_to_standard_axis(input):
     )
 
 
-def normalize_data(detObj):
+def normalize_data(detObj, keepRadial=False):
     """
     Preprocesses the point cloud data from the sensor.
 
@@ -531,6 +542,10 @@ def normalize_data(detObj):
         - "z": z-coordinate
         - "doppler": Doppler velocity
         - "peakVal": Signal Intensity
+        
+    keepRadial : bool, optional
+    If True, retains the original radial measurements (r, θ, ṙ) alongside Cartesian-transformed values.
+
 
     Returns
     -------
@@ -550,19 +565,22 @@ def normalize_data(detObj):
     input_data = np.vstack(
         (detObj["x"], detObj["y"], detObj["z"], detObj["doppler"], detObj["peakVal"])
     ).T
-    ef_data = np.empty((0, 8), dtype="float")
+    ef_data = np.empty((0, 8), dtype="float") if not keepRadial else np.empty((0, 11), dtype="float")
 
     for index in range(len(input_data)):
+        x, y, z, doppler, peakVal = input_data[index]
+
+        
+        # Compute polar coordinates
+        r = math.sqrt(x**2 + y**2 + z**2)
+        theta = math.atan2(y, x)  # Angle in radians
+        r_dot = doppler  # Radial velocity remains unchanged
 
         # Transform the radial velocity into Cartesian
-        r = math.sqrt(
-            input_data[index, 0] ** 2
-            + input_data[index, 1] ** 2
-            + input_data[index, 2] ** 2
-        )
+        r =  math.sqrt(x**2 + y**2 + z**2)
         if r == 0:
             vx = 0
-            vy = input_data[index, 3]
+            vy = doppler
             vz = 0
         else:
             if (
@@ -573,28 +591,22 @@ def normalize_data(detObj):
             ):
                 print(f"Error: {input_data[index, :]}")
 
-            vx = input_data[index, 3] * input_data[index, 0] / r
-            vy = input_data[index, 3] * input_data[index, 1] / r
-            vz = input_data[index, 3] * input_data[index, 2] / r
+            vx = doppler * x / r
+            vy = doppler * y / r
+            vz = doppler * z / r
 
         # Translate points to new coordinate system
         transformed_point = point_transform_to_standard_axis(
-            np.array(
-                [
-                    input_data[index, 0],
-                    input_data[index, 1],
-                    input_data[index, 2],
-                    vx,
-                    vy,
-                    vz,
-                ]
-            )
+            np.array([x, y, z, vx, vy, vz])
         )
 
         transformed_point = np.append(
             transformed_point, (input_data[index, 3], input_data[index, 4])
         )
 
+        # To be used with the Recursive Kalmann Filter
+        if keepRadial:
+            transformed_point = np.append(transformed_point, [r, theta, r_dot])  
         # Perform scene constraints filtering
         if (
             transformed_point[2] <= 2.5
@@ -749,3 +761,29 @@ def format_single_frame_mode(
         return final_frame.reshape((8, 8, 5))
     else:
         return limited_batch.reshape((batch_size, 8, 8, 5))
+
+def polar_to_cartesian(state_polar):
+        """
+        Convert a state vector from polar coordinates [r, _r, θ, _θ] to Cartesian coordinates [x, y, vx, vy].
+
+        Parameters
+        ----------
+        state_polar : np.array
+            State vector in polar coordinates [r, _r, θ, _θ].
+
+        Returns
+        -------
+        np.array
+            State vector in Cartesian coordinates [x, y, vx, vy].
+        """
+        r, r_dot, theta, theta_dot = state_polar[:4]
+
+        # Position
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+
+        # Velocity
+        vx = r_dot * np.cos(theta) - r * theta_dot * np.sin(theta)
+        vy = r_dot * np.sin(theta) + r * theta_dot * np.cos(theta)
+
+        return np.array([x, y, vx, vy])

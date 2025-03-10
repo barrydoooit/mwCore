@@ -7,8 +7,8 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.patches import Patch
 import random
 import constants as const
-from Tracking import TrackBuffer, ClusterTrack
-from Utils import calc_projection_points
+from tracking.AsteriosTracking import TrackBuffer, ClusterTrack
+from Utils import calc_projection_points, polar_to_cartesian
 
 
 def calc_fade_square(track: ClusterTrack):
@@ -30,13 +30,13 @@ def calc_fade_square(track: ClusterTrack):
 
 
 class VisualManager:
-    def __init__(self):
+    def __init__(self, polar=False):
         self.mode = const.SCREEN_CONNECTED
         self.counter = 1
         if self.mode:
             self.visual = ScreenAdapter()
         else:
-            self.visual = Visualizer(raw_cloud=True, b_boxes=True, posture=True, ground_truth=True)
+            self.visual = Visualizer(raw_cloud=True, b_boxes=True, posture=False, ground_truth=True, polar=polar)
 
     def update(self, trackbuffer, detObj, ground_truth):
         if const.SCREEN_CONNECTED:
@@ -67,12 +67,57 @@ class Visualizer:
         subplot.invert_xaxis()
         return subplot.scatter([], [], [])
 
-    def __init__(self, raw_cloud=False, b_boxes=False, posture=False, ground_truth=False):
+    def __init__(self, raw_cloud=False, b_boxes=False, posture=False, ground_truth=False, polar=False):
         self.dynamic_art = []
         self.errors = []
+        self.polar = polar
         fig = plt.figure()
         plots_num = sum([raw_cloud, b_boxes, posture, ground_truth])
         plots_index = 1
+        # Define connections and keypoints
+        self.connections = [
+            (0, 1),  # SpineBase to SpineMid
+            (1, 18),  # SpineMid to SpineShoulder
+            (2, 3),  # Neck to Head
+            (18, 4),  # SpineShoulder to ShoulderLeft
+            (18, 7),  # SpineShoulder to ShoulderRight
+            (4, 5),  # ShoulderLeft to ElbowLeft
+            (5, 6),  # ElbowLeft to WristLeft
+            (7, 8),  # ShoulderRight to ElbowRight
+            (8, 9),  # ElbowRight to WristRight
+            (0, 14),  # SpineBase to HipRight
+            (14, 15),  # HipRight to KneeRight
+            (15, 16),  # KneeRight to AnkleRight
+            (16, 17),  # AnkleRight to FootRight
+            (0, 10),  # SpineBase to HipLeft
+            (10, 11),  # HipLeft to KneeLeft
+            (11, 12),  # KneeLeft to AnkleLeft
+            (12, 13),  # AnkleLeft to FootLeft
+            (2, 18),  # Neck to SpineShoulder
+        ]
+
+        # Define keypoint colors
+        self.keypoint_colors = [
+            "blue",  # SpineBase,
+            "blue",  # SpineMid,
+            "blue",  # Neck,
+            "red",  # Head,
+            "blue",  # ShoulderLeft,
+            "green",  # ElbowLeft,
+            "green",  # WristLeft,
+            "blue",  # ShoulderRight,
+            "green",  # ElbowRight,
+            "green",  # WristRight,
+            "blue",  # HipLeft,
+            "green",  # KneeLeft,
+            "green",  # AnkleLeft,
+            "green",  # FootLeft,
+            "blue",  # HipRight,
+            "green",  # KneeRight,
+            "green",  # AnkleRight,
+            "green",  # FootRight,
+            "blue",  # SpineShoulder
+        ]
 
         # Create subplot of raw pointcloud
         if raw_cloud:
@@ -101,50 +146,7 @@ class Visualizer:
             self.ax_post.set_title("Posture Estimation")
             self.post_scatter = None
 
-            # Define connections and keypoints
-            self.connections = [
-                (0, 1),  # SpineBase to SpineMid
-                (1, 18),  # SpineMid to SpineShoulder
-                (2, 3),  # Neck to Head
-                (18, 4),  # SpineShoulder to ShoulderLeft
-                (18, 7),  # SpineShoulder to ShoulderRight
-                (4, 5),  # ShoulderLeft to ElbowLeft
-                (5, 6),  # ElbowLeft to WristLeft
-                (7, 8),  # ShoulderRight to ElbowRight
-                (8, 9),  # ElbowRight to WristRight
-                (0, 14),  # SpineBase to HipRight
-                (14, 15),  # HipRight to KneeRight
-                (15, 16),  # KneeRight to AnkleRight
-                (16, 17),  # AnkleRight to FootRight
-                (0, 10),  # SpineBase to HipLeft
-                (10, 11),  # HipLeft to KneeLeft
-                (11, 12),  # KneeLeft to AnkleLeft
-                (12, 13),  # AnkleLeft to FootLeft
-                (2, 18),  # Neck to SpineShoulder
-            ]
-
-            # Define keypoint colors
-            self.keypoint_colors = [
-                "blue",  # SpineBase,
-                "blue",  # SpineMid,
-                "blue",  # Neck,
-                "red",  # Head,
-                "blue",  # ShoulderLeft,
-                "green",  # ElbowLeft,
-                "green",  # WristLeft,
-                "blue",  # ShoulderRight,
-                "green",  # ElbowRight,
-                "green",  # WristRight,
-                "blue",  # HipLeft,
-                "green",  # KneeLeft,
-                "green",  # AnkleLeft,
-                "green",  # FootLeft,
-                "blue",  # HipRight,
-                "green",  # KneeRight,
-                "green",  # AnkleRight,
-                "green",  # FootRight,
-                "blue",  # SpineShoulder
-            ]
+            
             plots_index += 1
 
 
@@ -184,6 +186,9 @@ class Visualizer:
         plt.draw()
 
     def _draw_bounding_box(self, x, color="gray", fill=0):
+        if self.polar:
+            x = polar_to_cartesian(x).flatten()
+            x = np.array([x[0], x[1], 0]).flatten()
         # Create Bounding Boxes
         c = np.array(
             [
@@ -191,7 +196,7 @@ class Visualizer:
                 x[1],
                 x[2] * 0.0,
             ]
-        ).flatten()
+        ).flatten() if not self.polar else x
         vertices = np.array(
             [
                 [-0.3, -0.3, 0],
@@ -277,7 +282,7 @@ class Visualizer:
         # )
 
     def update_posture(self, tracks, ground_truth=False):
-        if not hasattr(self, "ax_post") and not hasattr(self, "ax_gt"):
+        if not hasattr(self, "ax_post") and not ground_truth:
             return
         ax_to_use = self.ax_gt if ground_truth else self.ax_post
         scatter_to_use = self.gt_scatter if ground_truth else self.post_scatter
@@ -296,10 +301,16 @@ class Visualizer:
                 continue
                 pass
 
+            # state will be the center of the bounding box in cartesian coordinates
+            if self.polar:
+                state = polar_to_cartesian(track.state.x.flatten())
+            else :
+                state = track.state.x[:3].flatten()
+
             # Mirror skeleton
             reshaped_data[0] *= -1
-            reshaped_data[0] += track.state.x[0]
-            reshaped_data[2] += track.state.x[1]
+            # reshaped_data[0] += state[0]
+            # reshaped_data[2] += state[1]
             # revert_static_skeleton(reshaped_data, track.cluster.centroid)
             for connection in self.connections:
                 keypoint_1 = connection[0]
@@ -327,7 +338,9 @@ class Visualizer:
             # Print the error between track.state.x and reshaped_data[0] below the plot
             if i == 0 and ground_truth:
                 joint_0 = np.array([reshaped_data[0][0], reshaped_data[2][0], reshaped_data[1][0]])
-                error = np.linalg.norm(track.state.x[:3].flatten() - joint_0)
+                if self.polar:
+                    state[2] = joint_0[2]
+                error = np.linalg.norm(state[:3].flatten() - joint_0)
                 self.errors.append(error)
                 ax_to_use.text(0,0,0,f"Error: {error:.2f}",fontdict={"fontsize": 10},color="red")
 
