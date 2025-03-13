@@ -6,7 +6,13 @@ import pstats
 from PyQt5.QtWidgets import QApplication
 from wakepy import keep
 import constants as const
-from ReadDataIWR1443 import ReadIWR14xx
+
+path_to_kaloyanBarry = os.path.join(os.path.dirname(__file__), '..', '..', 'kaloyanBarry')
+sys.path.append(os.path.abspath(path_to_kaloyanBarry))
+
+from radario.readDataIWR6843 import BufferedPcdReaderIWR6843
+from radario.chirpConfig.chirpConfigIWR6843 import ChirpConfigIWR6843
+from apps.lateral_tracking.constants import P_CONFIG_PATH, P_CLI_PORT, P_DATA_PORT
 from Visualizer import VisualManager
 from keras.models import load_model
 from Utils import (
@@ -16,12 +22,15 @@ from tracking.AsteriosTracking import (
     TrackBuffer,
     BatchedData,
 )
-
+import serial
 
 def main():
-    IWR1443 = ReadIWR14xx(
-        const.P_CONFIG_PATH, CLIport=const.P_CLI_PORT, Dataport=const.P_DATA_PORT
-    )
+    # IWR1443 = ReadIWR14xx(
+    #     const.P_CONFIG_PATH, CLIport=const.P_CLI_PORT, Dataport=const.P_DATA_PORT
+    # )
+    config = ChirpConfigIWR6843(P_CONFIG_PATH, P_CLI_PORT)
+    config.send_config(close_port=False)
+    reader = BufferedPcdReaderIWR6843(P_CLI_PORT, serial.Serial(P_DATA_PORT, BufferedPcdReaderIWR6843.DATA_BAUDRATE, timeout=1.0))
     SLEEPTIME = 0.001 * IWR1443.framePeriodicity  # Sleeping period (sec)
 
     app = QApplication(sys.argv)
@@ -39,7 +48,7 @@ def main():
                 t0 = time.time()
 
                 # Online mode
-                dataOk, _, detObj = IWR1443.read()
+                dataOk, _, detObj = reader.read()
 
                 if dataOk:
                     now = time.time()

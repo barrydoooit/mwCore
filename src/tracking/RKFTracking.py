@@ -11,6 +11,7 @@ from Utils import (
     format_single_frame,
 )
 from typing import List
+from tracking.palmar import AdaptiveOrderHMM, CPDA
 
 def voxelize(pointcloud, voxel_size):
     """
@@ -186,7 +187,7 @@ class RKFClusterTrack:
 
     """
 
-    def __init__(self, cluster: PointCluster):
+    def __init__(self, cluster: PointCluster, usePalmar=False):
         self.N_est = 0
         self.spread_est = np.zeros(4)  # Initialize with 4 elements for [r, _r, θ, _θ]
         self.group_disp_est = (
@@ -207,6 +208,12 @@ class RKFClusterTrack:
         self.color = np.random.rand(
             3,
         )
+
+        if usePalmar:
+            self.ao_hmm = AdaptiveOrderHMM()
+            self.usePalmar = True
+        else:
+            self.usePalmar = False
 
     def _estimate_point_num(self):
         """
@@ -403,6 +410,12 @@ class RKFClusterTrack:
         x_prev = self.state.x[:2, 0]
         self.state.update(z, R=self._get_Rc())
 
+        if self.usePalmar:
+            obs_index = self.observation_to_index(z)  # Use the helper function
+            # Refine state sequence using AO-HMM
+            refined_sequence = self.ao_hmm.refine_state([obs_index])    
+            self.state.x[:2] = refined_sequence
+
         # If the variance between the predicted and measured position
         variance = z[:1] - self.state.x[:1, 0]
         if abs(variance.any()) > 0.6 and self.lifetime == 0:
@@ -417,6 +430,29 @@ class RKFClusterTrack:
         else:
             self.lifetime += dt
 
+    def observation_to_index(self, observation):
+        """
+        Convert a continuous observation to a discrete index.
+        
+        Parameters:
+        - observation: List or array of observation values (e.g., [r, θ]).
+        
+        Returns:
+        - obs_index: Discrete index for the observation.
+        """
+        r, θ = observation
+
+        # Define bin edges for r and θ
+        r_bins = [0.000, 2.141, 3.257, 4.275]
+        θ_bins = [0.000, 1.413, 1.602, 1.941]
+
+        # Find bin indices for r and θ
+        r_bin = np.digitize(r, r_bins) - 1
+        θ_bin = np.digitize(θ, θ_bins) - 1
+
+        # Convert to a single index
+        obs_index = r_bin * 3 + θ_bin  # 3 θ bins
+        return obs_index
    
 
 class RKFTrackBuffer(Tracker):
@@ -472,7 +508,7 @@ class RKFTrackBuffer(Tracker):
 
     """
 
-    def __init__(self):
+    def __init__(self, usePalmar=False):
         """
         Initialize TrackBuffer with empty lists for tracks and effective tracks.
         """
@@ -480,6 +516,7 @@ class RKFTrackBuffer(Tracker):
         self.next_track_id = 0
         self.dt = 0
         self.t = time.time()
+        self.usePalmar = usePalmar
 
     def _maintain_tracks(self):
         """
@@ -569,7 +606,7 @@ class RKFTrackBuffer(Tracker):
             List of new clusters to be added as tracks.
         """
         for new_cluster in new_clusters:
-            new_track = RKFClusterTrack(PointCluster(np.array(new_cluster), polar=True))
+            new_track = RKFClusterTrack(PointCluster(np.array(new_cluster), polar=True), usePalmar=self.usePalmar)
             # new_track.id = self.next_track_id
             self.next_track_id += 1
             self.effective_tracks.append(new_track)
@@ -748,7 +785,6 @@ class RKFTrackBuffer(Tracker):
             reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
 
             # Convert state to cartesian coordinates
-            state_cartesian = polar_to_cartesian(track.state.x.flatten())
 
             reshaped_keypoints[0] *= -1
             # reshaped_keypoints[0] += state_cartesian[0]
