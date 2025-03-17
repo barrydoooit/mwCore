@@ -746,9 +746,11 @@ class RKFTrackBuffer(Tracker):
         indexes = []
         for index, track in enumerate(self.effective_tracks):
             if len(track.batch.effective_data) > const.MODEL_MIN_INPUT:
+                state = polar_to_cartesian(track.state.x.flatten())
                 rel_track_points = relative_coordinates(
                     list(track.batch.buffer),
-                    track.cluster.centroid[:2],
+                    state[:2],
+                    polar=True,
                 )
                 # The inputs are in the form of [x, y, z, x', y', z', r', s]
                 frame_matrices.append(format_single_frame(rel_track_points))

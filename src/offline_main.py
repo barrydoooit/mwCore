@@ -20,13 +20,14 @@ import pandas as pd
 
 ########### Set the experiment path here ############
 
-EXPERIMENT_PATH = "src/asterios_mars_reproduce/dataset/preprocessed/?/A21"
+EXPERIMENT_PATH = "src/asterios_mars_reproduce/dataset/preprocessed/?/A65"
 
 #####################################################
 
 
 def offline_main():
     kaloyanModule = import_kaloyan_tracking()
+    polarExperiment = False
 
     if not os.path.exists(str.replace(EXPERIMENT_PATH, "?", "mmWave")):
         raise ValueError(f"No experiment file found in the path: {EXPERIMENT_PATH}")
@@ -36,10 +37,10 @@ def offline_main():
 
     app = QApplication(sys.argv)
 
-    visual = VisualManager(polar=True) # Change to True for polar
-    trackbuffer =RKFTrackBuffer(usePalmar=True)
+    visual = VisualManager(polar=polarExperiment, b_boxes=True, raw_cloud=True, ground_truth=True)
+    trackbuffer =TrackBuffer(usePalmar=polarExperiment)
     # model = load_model(const.P_MODEL_PATH)
-    batch = BatchedData(np.empty((0, 11))) #Change to 11 for polar
+    batch = BatchedData(np.empty((0, 11 if polarExperiment else 8)))
     # batch = BatchedData() #Change to 11 for polar
     first_iter = [True]  
     accumulated_errors = {
@@ -64,7 +65,7 @@ def offline_main():
             df = pd.DataFrame(accumulated_errors)
             df_time = pd.DataFrame({'timeToTrack': timeToTrack})
             df_combined = pd.concat([df, df_time], axis=1)
-            df_combined.to_csv("src/asterios_mars_reproduce/errors/observations.csv", index=False)
+            df_combined.to_csv("src/asterios_mars_reproduce/errors/asteriosUsingBatch.csv", index=False)
                 
             # print("Visualizer error: ", np.mean(visual.visual.errors))
         else:
@@ -92,7 +93,7 @@ def offline_main():
 
                     trackbuffer.t = detObj["posix"][0] / 1000
                     # Apply scene constraints, point translation and axis normalization
-                    effective_data = normalize_data(detObj, keepRadial=True) # Change to True for polar
+                    effective_data = normalize_data(detObj, keepRadial=polarExperiment)
 
                     if effective_data.shape[0] != 0:
                         # Tracking module
@@ -110,24 +111,26 @@ def offline_main():
                         
                         for centroid, joint0 in centralValues:
                             for track in trackbuffer.effective_tracks:
-                                # error = np.linalg.norm(centroid - track.state.x[:3].flatten())
-                                # accumulated_errors["centroid"].append(error)
-                                # error = np.linalg.norm(joint0 - track.state.x[:3].flatten())
-                                # accumulated_errors["joint0"].append(error)
+                                if polarExperiment:
+                                    state_cartesian = polar_to_cartesian(track.state.x.flatten())
+                                    state_position = state_cartesian[:2]  # [x, y]
+                                    error_centroid = np.linalg.norm(centroid[:2] - state_position)
+                                    accumulated_errors["centroid"].append(error_centroid)
+                                    error_joint0 = np.linalg.norm(joint0[:2] - state_position)
+                                    accumulated_errors["joint0"].append(error_joint0)
+                                else:
+                                    error = np.linalg.norm(centroid - track.state.x[:3].flatten())
+                                    accumulated_errors["centroid"].append(error)
+                                    error = np.linalg.norm(joint0 - track.state.x[:3].flatten())
+                                    accumulated_errors["joint0"].append(error)
                                 
-                                state_cartesian = polar_to_cartesian(track.state.x.flatten())
-                                state_position = state_cartesian[:2]  # [x, y]
-                                error_centroid = np.linalg.norm(centroid[:2] - state_position)
-                                accumulated_errors["centroid"].append(error_centroid)
-                                error_joint0 = np.linalg.norm(joint0[:2] - state_position)
-                                accumulated_errors["joint0"].append(error_joint0)
 
                                 # error = np.linalg.norm(centroid[:2] - track.state.x[:2].flatten())
                                 # accumulated_errors["centroid"].append(error)
                                 # error = np.linalg.norm(joint0[:2] - track.state.x[:2].flatten())
                                 # accumulated_errors["joint0"].append(error)
 
-                    visual.update(trackbuffer, detObj, ground_truth=True)
+                    visual.update(trackbuffer, detObj)
                 if frames % 10 == 0:
                     print(f"Frame: {frames}")
                     print("Tracking time: ", (time_end - time_start) * 1000, "ms")

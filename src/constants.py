@@ -10,7 +10,7 @@ PROFILING = False
 SCREEN_CONNECTED = False
 
 ##### Paths and Ports #####
-P_CONFIG_PATH = "../../config_cases/harvyConfig2.cfg"
+P_CONFIG_PATH = "src/config_cases/vital_signs_ISK_2m.cfg"
 P_MODEL_PATH = "src/asterios_mars_reproduce/model/trained_model_barry.h5"
 P_DATA_PATH = "src/asterios_mars_reproduce/dataset"
 

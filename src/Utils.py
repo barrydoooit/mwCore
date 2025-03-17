@@ -622,7 +622,7 @@ def normalize_data(detObj, keepRadial=False):
     return ef_data
 
 
-def relative_coordinates(absolute_coords, reference: np.array):
+def relative_coordinates(absolute_coords, reference: np.array, polar=False):
     """
     Calculate relative coordinates on the x and y axes with respect to a reference point.
 
@@ -641,15 +641,22 @@ def relative_coordinates(absolute_coords, reference: np.array):
 
     relative_coords = []
     for frame in absolute_coords:
-        relative_coords.append(
-            np.array(
-                [
-                    point - [reference[0], reference[1], 0, 0, 0, 0, 0, 0]
-                    for point in frame
-                ]
-            )
-        )
-
+        if polar:
+            # Subtract from the first 8 elements only
+            frame_array = np.array([
+                np.concatenate([
+                    point[:8] - [reference[0], reference[1], 0, 0, 0, 0, 0, 0],
+                    point[8:]
+                ])
+                for point in frame
+            ])
+        else:
+            # Subtract from all elements
+            frame_array = np.array([
+                point - [reference[0], reference[1], 0, 0, 0, 0, 0, 0]
+                for point in frame
+            ])
+        relative_coords.append(frame_array)
     return relative_coords
 
 

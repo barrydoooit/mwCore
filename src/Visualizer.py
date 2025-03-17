@@ -30,15 +30,16 @@ def calc_fade_square(track: ClusterTrack):
 
 
 class VisualManager:
-    def __init__(self, polar=False):
+    def __init__(self, polar=False, raw_cloud=False, b_boxes=False, posture=False, ground_truth=False):
         self.mode = const.SCREEN_CONNECTED
         self.counter = 1
+        self.ground_truth = ground_truth
         if self.mode:
             self.visual = ScreenAdapter()
         else:
-            self.visual = Visualizer(raw_cloud=True, b_boxes=True, posture=False, ground_truth=True, polar=polar)
+            self.visual = Visualizer(raw_cloud=raw_cloud, b_boxes=b_boxes, posture=posture, ground_truth=ground_truth, polar=polar)
 
-    def update(self, trackbuffer, detObj, ground_truth):
+    def update(self, trackbuffer, detObj):
         if const.SCREEN_CONNECTED:
             self.visual.update(trackbuffer)
         else:
@@ -46,7 +47,7 @@ class VisualManager:
             self.visual.update_raw(detObj["x"], detObj["y"], detObj["z"])
             self.visual.update_bb(trackbuffer)
             self.visual.update_posture(trackbuffer.effective_tracks)
-            if ground_truth:
+            if self.ground_truth:
                 self.visual.update_posture(trackbuffer.effective_tracks, True)
             self.visual.draw()
             # plt.savefig(f"./gif/{self.counter}.png")

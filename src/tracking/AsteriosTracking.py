@@ -39,37 +39,74 @@ class BatchedData(RingBuffer):
     def __init__(self, init_data=np.empty((0, 8))):
         super().__init__(const.FB_FRAMES_BATCH + 1, init_val=init_data)
 
-        self.effective_data = np.concatenate(list(self.buffer), axis=0)
+        self.weights = self._compute_weights()  # Compute weights for the frames
+        self.effective_data = np.concatenate(self.buffer, axis=0)  # Combine all frames into a single array
+
+    def _compute_weights(self):
+        """
+        Compute weights for the frames in the buffer.
+
+        Returns:
+        -------
+        list: A list of weights for each frame in the buffer.
+        """
+        # Assign higher weights to more recent frames
+        return [1.0 - (i * 0.2) for i in range(len(self.buffer))]  # Example: [1.0, 0.8, 0.6, ...]
+    
+    def _compute_effective_data(self):
+        """
+        Compute the effective data by combining frames with temporal weighting.
+
+        Returns:
+        -------
+        numpy.ndarray: The combined data from all frames in the buffer, weighted by their age.
+        """
+        if not self.buffer:
+            return (np.empty((0, 8)), np.empty(0))
+
+        # return frames and weights
+        return (self.buffer, self.weights)
 
     def add_frame(self, new_data: np.array):
         """
         Add a new frame of data to the buffer.
+
+        Parameters:
+        ----------
+        - new_data (numpy.ndarray): New frame of data to add to the buffer.
         """
-        while len(self.buffer) >= self.size:
-            self.pop_frame()
+        if len(self.buffer) >= self.size:
+            self.pop_frame()  # Remove the oldest frame if the buffer is full
 
         super().append(new_data)
-        self.effective_data = np.concatenate(list(self.buffer), axis=0)
-
+        self.weights = self._compute_weights()
+        self.effective_data = np.concatenate(self.buffer, axis=0)
     def clear(self):
         """
         Clear the buffer and reset effective_data.
         """
         self.buffer.clear()
+        self.weights = self._compute_weights()
         self.effective_data = np.array([])
 
     def change_buffer_size(self, new_size):
         """
         Change the size of the buffer.
         """
+        while len(self.buffer) > new_size:
+            self.pop_frame()  # Remove excess frames if the new size is smaller
         self.size = new_size
-
+        self.weights = self._compute_weights()  # Recompute weights
+        self.effective_data = np.concatenate(self.buffer, axis=0)
+    
     def pop_frame(self):
         """
         Remove the oldest frame from the buffer.
         """
         if len(self.buffer) > 0:
             self.buffer.popleft()
+            self.weights = self._compute_weights()
+            self.effective_data = np.concatenate(self.buffer, axis=0)
 
 
 class KalmanState(KalmanFilter):
@@ -118,26 +155,47 @@ class PointCluster:
 
     """
 
-    def __init__(self, pointcloud: np.array, polar=False):
+    def __init__(self, pointcloud: np.array, polar=False, weights=None, isFrame=False):
         """
         Initialize PointCluster with a given pointcloud.
+        - pointcloud: Can be either:
+            - A flat 2D numpy array of points (shape: [N, D]), or
+            - A list/array of frames, where each frame is a 2D numpy array of points.
+        - polar: A boolean flag to indicate if the pointcloud is in polar coordinates.
+        - weights: An array of weights for each frame in the pointcloud.
+        - isFrame: If True, treats `pointcloud` as an array of frames 
         """
+        if isFrame:
+            # Input is an array of frames and frame-level weights
+            self.pointcloud = np.concatenate(pointcloud, axis=0)  # Combine frames into a single point cloud
+            self.point_num = pointcloud[0].shape[0]  # Number of points in the first frame
+            if weights is not None:
+                # Expand frame-level weights into point-level weights
+                self.weights = np.concatenate([
+                    np.full(frame.shape[0], weight) for frame, weight in zip(pointcloud, weights)
+                ])
+            else:
+                self.weights = np.ones(self.pointcloud.shape[0])  # Default weights (all 1.0)
+        else:
+            # Input is a flat array of points and point-level weights
+            self.pointcloud = pointcloud
+            self.weights = weights if weights is not None else np.ones(pointcloud.shape[0])  # Default weights (all 1.0)
+            self.point_num = self.pointcloud.shape[0]
+
 
         # NOTE: the input is now a list of 8 entries
-        self.pointcloud = pointcloud
-        self.point_num = pointcloud.shape[0]
-        self.centroid = np.mean(pointcloud[:, :6], axis=0)
-        self.min_vals = np.min(pointcloud[:, :6], axis=0)
-        self.max_vals = np.max(pointcloud[:, :6], axis=0)
+        self.centroid = np.average(self.pointcloud[:, :6], axis=0, weights=self.weights)
+        self.min_vals = np.min(self.pointcloud[:, :6], axis=0)
+        self.max_vals = np.max(self.pointcloud[:, :6], axis=0)
 
         velocity = math.sqrt(np.sum((self.centroid[3:6] ** 2)))
 
         # Last 3 values are radial measurements (r, θ, ṙ)
         if polar:
             # Compute centroid in polar coordinates (r, θ, ṙ)
-            self.centroid = np.mean(pointcloud[:, -3:], axis=0)  # Last 3 elements are [r, θ, ṙ]
-            self.min_vals = np.min(pointcloud[:, -3:], axis=0)
-            self.max_vals = np.max(pointcloud[:, -3:], axis=0)
+            self.centroid = np.mean(self.pointcloud[:, -3:], axis=0)  # Last 3 elements are [r, θ, ṙ]
+            self.min_vals = np.min(self.pointcloud[:, -3:], axis=0)
+            self.max_vals = np.max(self.pointcloud[:, -3:], axis=0)
 
 
         if velocity < const.TR_VEL_THRES:
@@ -341,8 +399,14 @@ class ClusterTrack:
         5. Estimates the dispersion matrix of the point groups in the cluster.
 
         """
-        self.cluster = PointCluster(pointcloud)
-        self.batch.add_frame(self.cluster.pointcloud)
+        # This is the original code. No temporal fusion is done here.
+        # self.cluster = PointCluster(pointcloud)
+        # self.batch.add_frame(self.cluster.pointcloud)
+        # Modified code
+        self.batch.add_frame(pointcloud)
+        (fusedPointcloud, weights) = self.batch._compute_effective_data()
+        self.cluster = PointCluster(fusedPointcloud, weights=weights, isFrame=True)
+
         self._estimate_point_num()
         self._estimate_measurement_spread()
         self._estimate_group_disp_matrix()
@@ -456,6 +520,10 @@ class ClusterTrack:
 
 
 class Tracker(ABC):
+    """
+    An abstract class representing a tracker.
+    """
+
     @abstractmethod
     def track(self, pointcloud, batch, clusteringAlgorithm="DBSCAN"):
         pass
@@ -521,7 +589,7 @@ class TrackBuffer(Tracker):
 
     """
 
-    def __init__(self):
+    def __init__(self, usePalmar=False):
         """
         Initialize TrackBuffer with empty lists for tracks and effective tracks.
         """
@@ -664,7 +732,7 @@ class TrackBuffer(Tracker):
         """
         unassigned, clouds = self._get_gated_clouds(full_set)
         new_inner_clusters = []
-
+        print("received points: ", len(full_set), " unassigned: ", len(unassigned))
         for j, track in enumerate(self.effective_tracks):
             if len(clouds[j]) == 0:
                 # If no points are associated with the track, just update the lifetime
