@@ -27,7 +27,8 @@ EXPERIMENT_PATH = "src/asterios_mars_reproduce/dataset/preprocessed/?/A65"
 
 def offline_main():
     kaloyanModule = import_kaloyan_tracking()
-    polarExperiment = False
+    # Change this to False if you want to use non-polar data
+    polarExperiment = True
 
     if not os.path.exists(str.replace(EXPERIMENT_PATH, "?", "mmWave")):
         raise ValueError(f"No experiment file found in the path: {EXPERIMENT_PATH}")
@@ -38,7 +39,8 @@ def offline_main():
     app = QApplication(sys.argv)
 
     visual = VisualManager(polar=polarExperiment, b_boxes=True, raw_cloud=True, ground_truth=True)
-    trackbuffer =TrackBuffer(usePalmar=polarExperiment)
+    # Change this to any Tracking module you want to use
+    trackbuffer =RKFTrackBuffer()
     # model = load_model(const.P_MODEL_PATH)
     batch = BatchedData(np.empty((0, 11 if polarExperiment else 8)))
     # batch = BatchedData() #Change to 11 for polar
@@ -65,7 +67,7 @@ def offline_main():
             df = pd.DataFrame(accumulated_errors)
             df_time = pd.DataFrame({'timeToTrack': timeToTrack})
             df_combined = pd.concat([df, df_time], axis=1)
-            df_combined.to_csv("src/asterios_mars_reproduce/errors/asteriosUsingBatch.csv", index=False)
+            df_combined.to_csv("src/asterios_mars_reproduce/errors/rkfUsingBatch.csv", index=False)
                 
             # print("Visualizer error: ", np.mean(visual.visual.errors))
         else:

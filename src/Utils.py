@@ -526,7 +526,7 @@ def point_transform_to_standard_axis(input):
     )
 
 
-def normalize_data(detObj, keepRadial=False):
+def normalize_data(detObj, keepRadial=False, transform=True):
     """
     Preprocesses the point cloud data from the sensor.
 
@@ -598,7 +598,7 @@ def normalize_data(detObj, keepRadial=False):
         # Translate points to new coordinate system
         transformed_point = point_transform_to_standard_axis(
             np.array([x, y, z, vx, vy, vz])
-        )
+        ) if transform else np.array([x, y, z, vx, vy, vz])
 
         transformed_point = np.append(
             transformed_point, (input_data[index, 3], input_data[index, 4])

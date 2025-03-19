@@ -29,7 +29,7 @@ from PyQt5.QtCore import QTimer
 import numpy as np
 
 def main():
-    polarExperiment = False
+    polarExperiment = True
     # Initialize configuration and reader
     config = ChirpConfigIWR6843(P_CONFIG_PATH, P_CLI_PORT)
     config.send_config(close_port=True)
@@ -40,7 +40,7 @@ def main():
     app = QApplication(sys.argv)
 
     # Initialize modules
-    trackbuffer = TrackBuffer()
+    trackbuffer = RKFTrackBuffer()
     batch = BatchedData(np.empty((0, 11 if polarExperiment else 8)))
     visual = VisualManager(raw_cloud=True, b_boxes=True, posture=True, polar=True)
     model = load_model(const.P_MODEL_PATH)
@@ -61,8 +61,9 @@ def main():
                     trackbuffer.t = now
 
                     # Apply scene constraints, translation
-                    effective_data = normalize_data(detObj, keepRadial=polarExperiment)
+                    effective_data = normalize_data(detObj, keepRadial=polarExperiment, transform=False)
                     ef_shape = effective_data.shape[0]
+                    print(f"Detected points: {len(effective_data)}")
 
                     if ef_shape != 0:
                         # Tracking Module
@@ -89,10 +90,12 @@ def main():
         # Cleanup function
         def cleanup():
             print("Cleaning up resources...")
+            nonlocal reader
             if reader:
                 reader.close()  # Ensure the reader is properly closed
                 del reader  # Ensure the reader is properly closed
             visual.visual.clear()  # Clear the visualizer
+            print("Resources cleaned up.")
             app.quit()  # Quit the Qt application
             sys.exit(0)  # Exit the program
 

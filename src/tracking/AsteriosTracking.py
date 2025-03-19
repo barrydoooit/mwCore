@@ -193,7 +193,7 @@ class PointCluster:
         # Last 3 values are radial measurements (r, θ, ṙ)
         if polar:
             # Compute centroid in polar coordinates (r, θ, ṙ)
-            self.centroid = np.mean(self.pointcloud[:, -3:], axis=0)  # Last 3 elements are [r, θ, ṙ]
+            self.centroid = np.average(self.pointcloud[:, -3:], axis=0, weights=self.weights) #Last 3 values are radial measurements (r, θ, ṙ)
             self.min_vals = np.min(self.pointcloud[:, -3:], axis=0)
             self.max_vals = np.max(self.pointcloud[:, -3:], axis=0)
 
@@ -380,7 +380,7 @@ class ClusterTrack:
             (N_est - N) / ((N_est - 1) * N)
         ) * self.group_disp_est
 
-    def associate_pointcloud(self, pointcloud: np.array):
+    def associate_pointcloud(self, pointcloud: np.array, useBatch=False):
         """
         Associate a point cloud with the track.
 
@@ -400,12 +400,14 @@ class ClusterTrack:
 
         """
         # This is the original code. No temporal fusion is done here.
-        # self.cluster = PointCluster(pointcloud)
-        # self.batch.add_frame(self.cluster.pointcloud)
-        # Modified code
-        self.batch.add_frame(pointcloud)
-        (fusedPointcloud, weights) = self.batch._compute_effective_data()
-        self.cluster = PointCluster(fusedPointcloud, weights=weights, isFrame=True)
+        if not useBatch:
+            self.cluster = PointCluster(pointcloud)
+            self.batch.add_frame(self.cluster.pointcloud)
+        else:
+            # Modified code
+            self.batch.add_frame(pointcloud)
+            (fusedPointcloud, weights) = self.batch._compute_effective_data()
+            self.cluster = PointCluster(fusedPointcloud, weights=weights, isFrame=True)
 
         self._estimate_point_num()
         self._estimate_measurement_spread()
@@ -740,7 +742,7 @@ class TrackBuffer(Tracker):
             else:
                 # If points are associated with the track, update the lifetime and associate the pointcloud
                 track.update_lifetime(dt=self.dt, reset=True)
-                track.associate_pointcloud(np.array(clouds[j]))
+                track.associate_pointcloud(np.array(clouds[j]), useBatch=True)
 
                 # inner cluster separation
                 # new_inner_clusters.append(track.seek_inner_clusters())
