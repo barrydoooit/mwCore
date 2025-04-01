@@ -39,7 +39,7 @@ def main():
     # Initialize Qt application
     app = QApplication(sys.argv)
 
-    # Initialize modules
+    # Initialize modules, change track buffer to the one you want to use
     trackbuffer = RKFTrackBuffer()
     batch = BatchedData(np.empty((0, 11 if polarExperiment else 8)))
     visual = VisualManager(raw_cloud=True, b_boxes=True, posture=True, polar=True)
