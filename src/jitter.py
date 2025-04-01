@@ -11,7 +11,7 @@ def sliding_window_std(errors, window_size=10, mode='last'):
     if len(errors) < window_size:
         return None  # Not enough data
     if mode == 'all':
-        return [np.std(errors[i:i+window_size]) for i in range(len(errors) - window_size + 1)]
+        return np.mean([np.std(errors[i:i+window_size]) for i in range(len(errors) - window_size + 1)])
     elif mode == 'last':
         return np.std(errors[-window_size:])
     else:
@@ -25,7 +25,7 @@ def temporal_derivative(errors, timestamps, mode='last'):
         return None  # Not enough data
     if mode == 'all':
         dt = np.diff(timestamps)
-        return np.diff(errors) / dt
+        return np.mean(np.diff(errors) / dt)
     elif mode == 'last':
         dt = timestamps[-1] - timestamps[-2]
         return (errors[-1] - errors[-2]) / dt
@@ -43,7 +43,7 @@ def temporal_acceleration(errors, timestamps, mode='last'):
         velocity = np.diff(errors) / dt
         # Compute second derivative (acceleration)
         acceleration = np.diff(velocity) / dt[:-1]
-        return acceleration
+        return np.mean(acceleration)
     
     elif mode == 'last':
         dt1 = timestamps[-1] - timestamps[-2]
@@ -61,7 +61,9 @@ def peak_to_peak_amplitude(errors, window_size=10, mode='last'):
     if len(errors) < window_size:
         return None  # Not enough data
     if mode == 'all':
-        return [np.max(errors[i:i+window_size]) - np.min(errors[i:i+window_size]) for i in range(len(errors) - window_size + 1)]
+        return np.mean(
+            [np.max(errors[i:i+window_size]) - np.min(errors[i:i+window_size]) for i in range(len(errors) - window_size + 1)]
+        )
     elif mode == 'last':
         return np.max(errors[-window_size:]) - np.min(errors[-window_size:])
     else:
