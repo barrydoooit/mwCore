@@ -1,18 +1,51 @@
+from functools import partial
 import numpy as np
-from tracking.AsteriosTracking import Tracker,  BatchedData, PointCluster
-from tracking.AsteriosTracking import ACTIVE, INACTIVE, STATIC, DYNAMIC
+from .AsteriosTracking import Tracker,  BatchedData, PointCluster
+from .AsteriosTracking import ACTIVE, INACTIVE, STATIC, DYNAMIC
 import time
-import constants as const
-from Utils import (
+from .utils import (
+    altered_EuclideanDist,
     apply_clustering,
-    polar_to_cartesian,
-    RingBuffer,
-    relative_coordinates,
-    format_single_frame,
 )
-from typing import List
-from tracking.palmar import AdaptiveOrderHMM, CPDA
+from typing import Any, List, Tuple
+from .palmar import AdaptiveOrderHMM, CPDA
+from dataclasses import dataclass
+from typing import Callable, List
 
+@dataclass
+class RKFConfig:
+    # Functions to compute state transition and process noise covariance given dt.
+    RKF_F: Callable[[float], np.ndarray]  # e.g. lambda dt: np.array([[1, dt, 0, 0], [0, 1, 0, 0], [0, 0, 1, dt], [0, 0, 0, 1]])
+    RKF_Q: Callable[[float], np.ndarray]  # e.g. lambda dt: np.array([[0.2,0,0,0],[0,0.2,0,0],[0,0,0.2,0],[0,0,0,0.2]])
+    
+    # Fixed measurement matrix for polar observations: observes [r, θ]
+    H: np.ndarray  # shape (2,4), e.g. np.array([[1,0,0,0],[0,0,1,0]])
+    
+    KF_GROUP_DISP_EST_INIT: float  # e.g. 0.1
+    KF_ENABLE_EST: bool  # e.g. False
+    KF_A_N: float  # e.g. 0.9
+    KF_EST_POINTNUM: int  # e.g. 10
+    KF_SPREAD_LIM: List[float]  # e.g. [0.2, 0.2, 2, 1.2]
+    KF_A_SPR: float  # e.g. 0.9
+    
+    DB_POINTS_THRES: int  # e.g. 40
+    DB_SPREAD_THRES: float  # e.g. 0.7
+    DB_EPS: float
+    DB_RANGE_WEIGHT: float
+    DB_Z_WEIGHT: float
+    DB_MIN_SAMPLES_MIN: int
+    FB_FRAMES_BATCH: int  # e.g. 2
+    
+    KF_R_STD: float  # e.g. 0.1
+    
+    # MODEL_DEFAULT_POSTURE: np.ndarray  # e.g. a posture array
+    
+    TR_LIFETIME_DYNAMIC: float  # e.g. 3.0 (seconds)
+    TR_LIFETIME_STATIC: float  # e.g. 7.0 (seconds)
+    TR_GATE: float  # e.g. 4.5
+    TR_MAX_TRACKS: int  # e.g. 4
+    TR_VEL_THRES: float
+    
 def voxelize(pointcloud, voxel_size):
     """
     Perform voxelization on the point cloud data.
@@ -186,264 +219,121 @@ class RKFClusterTrack:
         Seek inner clusters within the current track.
 
     """
-
-    def __init__(self, cluster: PointCluster, usePalmar=False):
-        self.N_est = 0
-        self.spread_est = np.zeros(4)  # Initialize with 4 elements for [r, _r, θ, _θ]
-        self.group_disp_est = (
-            np.eye(4) * const.KF_GROUP_DISP_EST_INIT  
-        )
+    def __init__(self, cluster: PointCluster, config: RKFConfig, usePalmar: bool = False) -> None:
+        self.config = config
+        self.N_est = 0  # For RKF the state vector has 4 elements: [r, r_dot, θ, θ_dot]
+        self.spread_est = np.zeros(4)
+        self.group_disp_est = np.eye(4) * config.KF_GROUP_DISP_EST_INIT
         self.cluster = cluster
         self.batch = BatchedData(cluster.pointcloud)
-        self.state = RecursiveKalmanFilter()
-        self.status = ACTIVE
+        self.state = RecursiveKalmanFilter()  # Initialized with default dt etc.
+        self.status = ACTIVE  # ACTIVE status
         self.lifetime = 0
-        self.keypoints = const.MODEL_DEFAULT_POSTURE
-        # self.height_buffer = RingBuffer(
-        #     const.FB_HEIGHT_FRAME_PERIOD, init_val=self.cluster.max_vals[2] - 0.01
-        # )
-        # self.width_buffer = RingBuffer(const.FB_WIDTH_FRAME_PERIOD)
-        # NOTE: For visualizing purposes only
+        # self.keypoints = config.MODEL_DEFAULT_POSTURE
         self.predict_x = self.state.x
-        self.color = np.random.rand(
-            3,
-        )
-
+        self.color = np.random.rand(3)
+        self.usePalmar = usePalmar
+        
         if usePalmar:
             self.ao_hmm = AdaptiveOrderHMM()
-            self.usePalmar = True
-        else:
-            self.usePalmar = False
 
-    def _estimate_point_num(self):
-        """
-        Estimate the expected number of points in the cluster.
-        """
-        if const.KF_ENABLE_EST:
+    def _estimate_point_num(self) -> None:
+        if self.config.KF_ENABLE_EST:
             if self.cluster.point_num > self.N_est:
                 self.N_est = self.cluster.point_num
             else:
-                self.N_est = (
-                    1 - const.KF_A_N
-                ) * self.N_est + const.KF_A_N * self.cluster.point_num
+                self.N_est = (1 - self.config.KF_A_N) * self.N_est + self.config.KF_A_N * self.cluster.point_num
         else:
-            self.N_est = max(const.KF_EST_POINTNUM, self.cluster.point_num)
+            self.N_est = max(self.config.KF_EST_POINTNUM, self.cluster.point_num)
 
-    def _estimate_measurement_spread(self):
-        """
-        Estimate the spread of measurements in each dimension.
-        """
+    def _estimate_measurement_spread(self) -> None:
         for m in range(len(self.cluster.min_vals)):
             spread = self.cluster.max_vals[m] - self.cluster.min_vals[m]
-
-            # Unbiased spread estimation
             if self.cluster.point_num != 1:
-                spread = (
-                    spread * (self.cluster.point_num + 1) / (self.cluster.point_num - 1)
-                )
-
-            # Ensure the computed spread estimation is between 1x and 2x of configured limits
-            spread = min(2 * const.KF_SPREAD_LIM[m], spread)
-            spread = max(const.KF_SPREAD_LIM[m], spread)
-
+                spread = spread * (self.cluster.point_num + 1) / (self.cluster.point_num - 1)
+            spread = min(2 * self.config.KF_SPREAD_LIM[m], spread)
+            spread = max(self.config.KF_SPREAD_LIM[m], spread)
             if spread > self.spread_est[m]:
                 self.spread_est[m] = spread
             else:
-                self.spread_est[m] = (1.0 - const.KF_A_SPR) * self.spread_est[
-                    m
-                ] + const.KF_A_SPR * spread
+                self.spread_est[m] = (1.0 - self.config.KF_A_SPR) * self.spread_est[m] + self.config.KF_A_SPR * spread
 
-    def _get_D(self):
-        """
-        Calculate and get the dispersion matrix for the track in state vector coordinates [r, ṙ, θ, θ̇].
-
-        Returns
-        -------
-        numpy.ndarray
-            Dispersion matrix for the cluster (4x4 for [r, ṙ, θ, θ̇]).
-        """
-        dimension = 4  # State vector dimensions: [r, ṙ, θ, θ̇]
-        pointcloud = self.cluster.pointcloud[:, -3:]  # Use only the last 3 polar dimensions [r, θ, ṙ]
-        centroid = self.cluster.centroid  # Centroid is [r, θ, ṙ]
-
-        # Transform measurements to state vector coordinates [r, ṙ, θ, θ̇]
+    def _get_D(self) -> np.ndarray:
+        dimension = 4  # [r, r_dot, θ, θ_dot]
+        # Use only the last 3 polar dimensions from the cluster: [r, θ, r_dot]
+        pointcloud = self.cluster.pointcloud[:, -3:]
+        centroid = self.cluster.centroid
+        # Transform measurements to state vector coordinates: assume θ_dot = 0
         transformed_pointcloud = np.zeros((pointcloud.shape[0], dimension))
         for i, point in enumerate(pointcloud):
-            r, θ, ṙ = point
-            transformed_pointcloud[i] = [r, ṙ, θ, 0.0]  # Assume θ̇ = 0 (or estimate it if available)
-
-        # Compute the centroid in state vector coordinates
+            r, theta, r_dot = point
+            transformed_pointcloud[i] = [r, r_dot, theta, 0.0]
         transformed_centroid = np.array([centroid[0], centroid[2], centroid[1], 0.0])
-
-        # Compute the covariance of the transformed point cloud around the transformed centroid
-        disp = np.zeros((dimension, dimension), dtype="float")
+        disp = np.zeros((dimension, dimension), dtype=float)
         for i in range(dimension):
             for j in range(dimension):
-                disp[i, j] = np.mean(
-                    (transformed_pointcloud[:, i] - transformed_centroid[i]) *
-                    (transformed_pointcloud[:, j] - transformed_centroid[j])
-                )
-
+                disp[i, j] = np.mean((transformed_pointcloud[:, i] - transformed_centroid[i]) *
+                                    (transformed_pointcloud[:, j] - transformed_centroid[j]))
         return disp
 
-    def _estimate_group_disp_matrix(self):
-        """
-        Estimate the group dispersion matrix.
-        """
+    def _estimate_group_disp_matrix(self) -> None:
         a = self.cluster.point_num / self.N_est
         self.group_disp_est = (1 - a) * self.group_disp_est + a * self._get_D()
 
-    def _get_Rc(self):
-        """
-        Get the combined covariance matrix.
-
-        Returns
-        -------
-        numpy.ndarray
-            Combined covariance matrix for the cluster (2x2 for [r, θ]).
-        """
+    def _get_Rc(self) -> np.ndarray:
         N = self.cluster.point_num
         N_est = self.N_est
+        R_m = self.get_Rm()  # 2x2 measurement covariance
+        # Project group dispersion to measurement space using H from config.
+        D_projected = self.config.H @ self._get_D() @ self.config.H.T
+        return (R_m / N) + (((N_est - N) / ((N_est - 1) * N)) * D_projected)
 
-        # Handle edge cases
-        if N == 0:
-            raise ValueError("Cluster has no points (N = 0). Cannot compute Rc.")
-        if N_est == 1:
-            raise ValueError("Estimated number of points is 1 (N_est = 1). Cannot compute Rc.")
-
-        # Get measurement noise covariance matrix (R_m)
-        R_m = self.get_Rm()  # 2x2 for [r, θ]
-
-        # Get group dispersion matrix (D)
-        D = self._get_D()  # 4x4 for [r, ṙ, θ, θ̇]
-
-        # Project D into measurement space
-        H = np.array([
-            [1, 0, 0, 0],  # Observe range (r)
-            [0, 0, 1, 0]   # Observe angle (θ)
-        ])
-        D_projected = H @ D @ H.T  # 2x2
-
-        # Compute the combined covariance matrix
-        Rc = (R_m / N) + ((N_est - N) / ((N_est - 1) * N)) * D_projected
-
-        return Rc
-
-    def associate_pointcloud(self, pointcloud: np.array, useBatch=False):
-        """
-        Associate a point cloud with the track.
-
-        Parameters
-        ----------
-        pointcloud : np.array
-            2D NumPy array representing the point cloud.
-
-        Notes
-        -----
-        This method performs the following steps:
-        1. Initializes a PointCluster with the given point cloud.
-        2. Adds the point-cluster to the track's frames batch.
-        3. Estimates the number of points in the cluster.
-        4. Estimates the spread of measurements in the cluster.
-        5. Estimates the dispersion matrix of the point groups in the cluster.
-
-        """
+    def associate_pointcloud(self, pointcloud: np.array, useBatch: bool = False) -> None:
         if not useBatch:
             self.cluster = PointCluster(pointcloud, polar=True)
             self.batch.add_frame(self.cluster.pointcloud)
         else:
             self.batch.add_frame(pointcloud)
-            (fusedPointcloud, weights) = self.batch._compute_effective_data()
-            self.cluster = PointCluster(fusedPointcloud, weights=weights, isFrame=True, polar=True)
-
-
+            fused, weights = self.batch._compute_effective_data()
+            self.cluster = PointCluster(fused, tr_vel_threshold=self.config.TR_VEL_THRES, weights=weights, isFrame=True, polar=True)
         self._estimate_point_num()
         self._estimate_measurement_spread()
         self._estimate_group_disp_matrix()
 
-
-    def get_Rm(self):
-        """
-        Get the measurement covariance matrix for the observed dimensions [r, θ].
-        """
-        # Use only the first 2 elements of spread_est (r and θ)
+    def get_Rm(self) -> np.ndarray:
         diagonal_elements = (self.spread_est[:2] / 2) ** 2
-        R_m = np.diag(diagonal_elements)
-        return R_m
+        return np.diag(diagonal_elements)
 
-    def predict_state(self, dt: float):
-        """
-        Predict the state of the Kalman filter based on the time multiplier.
-
-        Parameters
-        ----------
-        dt : float
-            Time multiplier for the prediction.
-        """
-        # Update the transition matrix (F) with the new time step (dt)
-        self.state.F = np.array([
-            [1, dt, 0,  0],
-            [0,  1, 0,  0],
-            [0,  0, 1, dt],
-            [0,  0, 0,  1]
-        ])
-        
-        # Predict the state using the updated transition matrix and process noise covariance
+    def predict_state(self, dt: float) -> None:
+        self.state.F = self.config.RKF_F(dt)
         self.state.predict()
         self.predict_x = self.state.x
 
-    def update_state(self):
-        """
-        Update the state of the Kalman filter based on the associated measurement (pointcloud centroid).
-        """
+    def update_state(self) -> None:
         z = np.array(self.cluster.centroid)[:2]
-        x_prev = self.state.x[:2, 0]
         self.state.update(z, R=self._get_Rc())
-
         if self.usePalmar:
-            obs_index = self.observation_to_index(z)  # Use the helper function
-            # Refine state sequence using AO-HMM
-            refined_sequence = self.ao_hmm.refine_state([obs_index])    
-            self.state.x[:2] = refined_sequence
-
-        # If the variance between the predicted and measured position
+            obs_index = self.observation_to_index(z)
+            refined_sequence = self.ao_hmm.refine_state([obs_index])
+            self.state.x[:2] = np.array(refined_sequence).reshape(-1,1)
         variance = z[:1] - self.state.x[:1, 0]
         if abs(variance.any()) > 0.6 and self.lifetime == 0:
             self.state.x[:1, 0] += variance * 0.4
 
-    def update_lifetime(self, dt, reset=False):
-        """
-        Update the track lifetime.
-        """
+    def update_lifetime(self, dt: float, reset: bool = False) -> None:
         if reset:
             self.lifetime = 0
         else:
             self.lifetime += dt
 
-    def observation_to_index(self, observation):
-        """
-        Convert a continuous observation to a discrete index.
-        
-        Parameters:
-        - observation: List or array of observation values (e.g., [r, θ]).
-        
-        Returns:
-        - obs_index: Discrete index for the observation.
-        """
-        r, θ = observation
-
-        # Define bin edges for r and θ
+    def observation_to_index(self, observation: np.ndarray) -> int:
+        r, theta = observation
         r_bins = [0.000, 2.141, 3.257, 4.275]
-        θ_bins = [0.000, 1.413, 1.602, 1.941]
-
-        # Find bin indices for r and θ
+        theta_bins = [0.000, 1.413, 1.602, 1.941]
         r_bin = np.digitize(r, r_bins) - 1
-        θ_bin = np.digitize(θ, θ_bins) - 1
-
-        # Convert to a single index
-        obs_index = r_bin * 3 + θ_bin  # 3 θ bins
+        theta_bin = np.digitize(theta, theta_bins) - 1
+        obs_index = r_bin * 3 + theta_bin
         return obs_index
-   
 
 class RKFTrackBuffer(Tracker):
     """
@@ -498,142 +388,61 @@ class RKFTrackBuffer(Tracker):
 
     """
 
-    def __init__(self, usePalmar=False):
-        """
-        Initialize TrackBuffer with empty lists for tracks and effective tracks.
-        """
-        self.effective_tracks: List[RKFClusterTrack] = []
+    def __init__(self, config: RKFConfig, usePalmar: bool = False) -> None:
+        self.config = config
+        self.effective_tracks = []
         self.next_track_id = 0
         self.dt = 0
         self.t = time.time()
         self.usePalmar = usePalmar
 
-    def _maintain_tracks(self):
-        """
-        Update the status of tracks based on their mobility and lifetime. Then update the list of effective tracks.
-        """
+    def _maintain_tracks(self) -> None:
         for track in self.effective_tracks:
-            if track.cluster.status == DYNAMIC:
-                lifetime = const.TR_LIFETIME_DYNAMIC
-            else:
-                lifetime = const.TR_LIFETIME_STATIC
-
+            lifetime = self.config.TR_LIFETIME_DYNAMIC if track.cluster.status != 0 else self.config.TR_LIFETIME_STATIC
             if track.lifetime > lifetime:
-                track.status = INACTIVE
+                track.status = 0  # INACTIVE
+        self.effective_tracks = [track for track in self.effective_tracks if track.status != 0]
 
-        self.effective_tracks[:] = [
-            track for track in self.effective_tracks if track.status != INACTIVE
-        ]
-
-    def _calc_dist_fun(self, full_set: np.array):
-        """
-        Calculate the Mahalanobis distance matrix for gating using polar measurements.
-
-        Parameters
-        ----------
-        full_set : np.ndarray
-            Full set of points, where the last 3 elements of each point are radial
-            measurements (r, θ, ṙ).
-
-        Returns
-        -------
-        np.ndarray
-            An array representing the associated track (entry) for each point (index).
-            If no track is associated with a point, the entry is set to None.
-        """
-        dist_matrix = np.empty((full_set.shape[0], len(self.effective_tracks)))
-        associated_track_for = np.full(full_set.shape[0], None, dtype=object)
-
-        # Measurement matrix (observes range and angle)
-        H = np.array([
-            [1, 0, 0, 0],  # Observe range (r)
-            [0, 0, 1, 0]   # Observe angle (θ)
-        ])
-
+    def _calc_dist_fun(self, full_set: np.array) -> np.ndarray:
+        num_points = full_set.shape[0]
+        num_tracks = len(self.effective_tracks)
+        dist_matrix = np.empty((num_points, num_tracks))
+        associated_track_for = np.full(num_points, None, dtype=object)
+        H = self.config.H  # measurement matrix
         for j, track in enumerate(self.effective_tracks):
-            # Predicted measurement in polar coordinates
             H_i = np.dot(H, track.state.x).flatten()
-
-            # Group residual covariance matrix
             C_g_j = H @ (track.state.P + track.group_disp_est) @ H.T + track.get_Rm()
-
             for i, point in enumerate(full_set):
-                # Extract polar measurements (r, θ, ṙ)
-                r, θ, ṙ = point[-3:]
-
-                # Construct measurement vector [r, θ]
-                z = np.array([r, θ])
-
-                # Innovation for each measurement
+                r, theta, _ = point[-3:]  # use last 3 polar dimensions: [r,θ,r_dot]
+                z = np.array([r, theta])
                 y_ij = z - H_i
-
-                # Distance function (d^2)
-                dist_matrix[i][j] = np.log(np.abs(np.linalg.det(C_g_j))) + np.dot(
-                    np.dot(y_ij.T, np.linalg.inv(C_g_j)), y_ij
-                )
-
-                # Perform Gate threshold check
-                if dist_matrix[i][j] < const.TR_GATE:
-                    # Just choose the closest Mahalanobis distance
+                dist_matrix[i][j] = np.log(np.abs(np.linalg.det(C_g_j))) + np.dot(np.dot(y_ij.T, np.linalg.inv(C_g_j)), y_ij)
+                if dist_matrix[i][j] < self.config.TR_GATE:
                     if associated_track_for[i] is None:
                         associated_track_for[i] = j
                     else:
-                        if (
-                            dist_matrix[i][j]
-                            < dist_matrix[i][int(associated_track_for[i])]
-                        ):
+                        if dist_matrix[i][j] < dist_matrix[i][int(associated_track_for[i])]:
                             associated_track_for[i] = j
-
         return associated_track_for
 
-    def _add_tracks(self, new_clusters):
-        """
-        Add new tracks to the buffer.
-
-        Parameters
-        ----------
-        new_clusters : list
-            List of new clusters to be added as tracks.
-        """
+    def _add_tracks(self, new_clusters: List[np.array]) -> None:
         for new_cluster in new_clusters:
-            new_track = RKFClusterTrack(PointCluster(np.array(new_cluster), polar=True), usePalmar=self.usePalmar)
-            # new_track.id = self.next_track_id
+            new_track = RKFClusterTrack(PointCluster(np.array(new_cluster), tr_vel_threshold=self.config.TR_VEL_THRES, polar=True), self.config, usePalmar=self.usePalmar)
             self.next_track_id += 1
             self.effective_tracks.append(new_track)
 
-    def _predict_all(self):
-        """
-        Predict the state of all effective tracks.
-        """
+    def _predict_all(self) -> None:
         for track in self.effective_tracks:
             track.predict_state(track.lifetime + self.dt)
 
-    def _update_all(self):
-        """
-        Update the state of all effective tracks.
-        """
+    def _update_all(self) -> None:
         for track in self.effective_tracks:
             track.update_state()
 
-    def _get_gated_clouds(self, full_set: np.array):
-        """
-        Split the pointcloud according to the formed gates and return gated and unassigned clouds.
-
-        Parameters
-        ----------
-        full_set : np.array
-            Full set of points.
-
-        Returns
-        -------
-        tuple
-            Tuple containing unassigned points and clustered clouds.
-        """
-        unassigned = np.empty((0, 11), dtype="float")
+    def _get_gated_clouds(self, full_set: np.array) -> Tuple[np.ndarray, List[List[np.array]]]:
+        unassigned = np.empty((0, full_set.shape[1]), dtype=float)
         clusters = [[] for _ in range(len(self.effective_tracks))]
-        # Simple matrix has len = len(full_set) and has the index of the chosen track.
         associated_track_for = self._calc_dist_fun(full_set)
-
         for i, point in enumerate(full_set):
             if associated_track_for[i] is None:
                 unassigned = np.append(unassigned, [point], axis=0)
@@ -641,154 +450,73 @@ class RKFTrackBuffer(Tracker):
                 clusters[associated_track_for[i]].append(point)
         return unassigned, clusters
 
-    def _associate_points_to_tracks(self, full_set: np.array):
-        """
-        Associate points to existing tracks and handle inner cluster separation.
-
-        Parameters
-        ----------
-        full_set : np.array
-            Full set of sensed points.
-
-        Returns
-        -------
-        np.ndarray
-            Unassigned points.
-        """
+    def _associate_points_to_tracks(self, full_set: np.array) -> np.ndarray:
         unassigned, clouds = self._get_gated_clouds(full_set)
         new_inner_clusters = []
-
         for j, track in enumerate(self.effective_tracks):
             if len(clouds[j]) == 0:
-                # If no points are associated with the track, just update the lifetime
                 track.update_lifetime(dt=self.dt)
             else:
-                # If points are associated with the track, update the lifetime and associate the pointcloud
                 track.update_lifetime(dt=self.dt, reset=True)
                 track.associate_pointcloud(np.array(clouds[j]), useBatch=True)
-
-                # inner cluster separation
-                # new_inner_clusters.append(track.seek_inner_clusters())
-
-        # In case inner clusters are found, create new tracks for them
         for inner_cluster in new_inner_clusters:
             self._add_tracks(inner_cluster)
-
         return unassigned
 
-    def track(self, pointcloud, batch: BatchedData, clusteringAlgorithm="DBSCAN"):
-        """
-        Perform the tracking process including prediction, association, maintenance, update, and clustering.
-
-        Parameters
-        ----------
-        pointcloud : np.array
-            Pointcloud data.
-        batch : BatchedData
-            BatchedData instance for managing frames.
-        clusteringAlgorithm : str
-            Clustering algorithm to be used. Default is DBSCAN. Accepted values are "DBSCAN", "BIRCH", or "both".
-        Returns
-        -------
-        None
-        """
-        if (clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]):
+    def track(self, pointcloud: np.array, batch: BatchedData, clusteringAlgorithm: str = "DBSCAN") -> None:
+        if clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]:
             raise ValueError("Invalid clustering algorithm. Please use 'DBSCAN', 'BIRCH', or 'both'.")
-
-        # Prediction Step. This modifies only the kalman state of the tracks
         self._predict_all()
-
-        # Association Step
         unassigned = self._associate_points_to_tracks(pointcloud)
         self._maintain_tracks()
-
-        # Update Step
         self._update_all()
-
-        # Clustering of the remainder points Step
         new_clusters = []
         batch.add_frame(unassigned)
-
-        if (len(batch.effective_data) > 0 and len(self.effective_tracks) < const.TR_MAX_TRACKS):
-            new_clusters = apply_clustering(
-                batch.effective_data, clusteringAlgorithm
-            )
-            if len(new_clusters) > 0:
+        if batch.effective_data.size > 0 and len(self.effective_tracks) < self.config.TR_MAX_TRACKS:
+            new_clusters = apply_clustering(batch.effective_data, 
+                                            clusteringAlgorithm, 
+                                            metric=partial(altered_EuclideanDist,
+                                                db_range_weight=self.config.DB_RANGE_WEIGHT,
+                                                db_z_weight=self.config.DB_Z_WEIGHT),
+                                            eps=self.config.DB_EPS,
+                                            min_samples=self.config.DB_MIN_SAMPLES_MIN,
+                                            )
+            if new_clusters:
                 batch.clear()
-
-            # Create new track for every new cluster
             self._add_tracks(new_clusters)
 
-    def estimate_posture(self, model):
-        """
-        Format the pointcloud, estimate and save the posture of the target of each track using a CNN model.
+    # def estimate_posture(self, model: Any) -> None:
+    #     frame_matrices = []
+    #     indexes = []
+    #     for idx, track in enumerate(self.effective_tracks):
+    #         batch_data = np.concatenate(list(track.batch.buffer), axis=0) if hasattr(track.batch, 'buffer') else track.batch.effective_data
+    #         if batch_data.size > self.config.MODEL_MIN_INPUT:
+    #             state_cartesian = polar_to_cartesian(track.state.x.flatten())
+    #             rel_track_points = []  # use relative_coordinates if needed
+    #             frame_matrices.append(rel_track_points)  # Replace with proper formatting
+    #             indexes.append(idx)
+    #     frame_matrices_array = np.array(frame_matrices)
+    #     if frame_matrices_array.size > 0:
+    #         frame_keypoints = model.predict(frame_matrices_array)
+    #         for i, idx in enumerate(indexes):
+    #             self.effective_tracks[idx].keypoints = frame_keypoints[i]
 
-        Parameters
-        ----------
-        model : Model
-            The CNN model used for posture estimation.
+    # def update_real_posture(self, real_data: np.array) -> List[tuple]:
+    #     centralValues = []
+    #     for idx, track in enumerate(self.effective_tracks):
+    #         try:
+    #             kinect_coords = real_data[idx]
+    #         except Exception:
+    #             print("Warning. No more than one skeleton detected; using same skeleton for all tracks.", time.time())
+    #             kinect_coords = real_data[0]
+    #         track.ground_truth = np.array(kinect_coords)
+    #         reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
+    #         reshaped_keypoints[0] *= -1
+    #         reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
+    #         centroid = np.mean(reshaped_keypoints, axis=1)
+    #         centralValues.append((centroid, reshaped_keypoints[:, 0]))
+    #     return centralValues
 
-        Returns
-        -------
-        None
-        """
-        frame_matrices = []
-        indexes = []
-        for index, track in enumerate(self.effective_tracks):
-            if len(track.batch.effective_data) > const.MODEL_MIN_INPUT:
-                state = polar_to_cartesian(track.state.x.flatten())
-                rel_track_points = relative_coordinates(
-                    list(track.batch.buffer),
-                    state[:2],
-                    polar=True,
-                )
-                # The inputs are in the form of [x, y, z, x', y', z', r', s]
-                frame_matrices.append(format_single_frame(rel_track_points))
-                indexes.append(index)
-
-        frame_matrices_array = np.array(frame_matrices)
-        if len(frame_matrices_array) > 0:
-            frame_keypoints = model.predict(frame_matrices_array)
-            for i, index in enumerate(indexes):
-                self.effective_tracks[index].keypoints = frame_keypoints[i]
-
-    def update_real_posture(self, real_data):
-        """
-        Update the real posture of the target of each track using the real data.
-
-        Parameters
-        ----------
-        real_data : np.array
-            Real data for posture estimation.
-
-        Returns
-        -------
-        An array of tuples containing the centroid and joint 0 of each track. They will be reformatted to (x, y, z) as the coordinate system is like that.
-        """
-        centralValues = []
-        for index, track in enumerate(self.effective_tracks):
-            try:
-                kinect_coords = real_data[index]
-              
-            except:
-                print("Warning. No more than one skeleton detected, showing the same skeleton for all tracks. ", time.time())
-                kinect_coords = real_data[0]
-            track.ground_truth = np.array(kinect_coords)
-            reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
-
-            # Convert state to cartesian coordinates
-
-            reshaped_keypoints[0] *= -1
-            # reshaped_keypoints[0] += state_cartesian[0]
-            # reshaped_keypoints[2] += state_cartesian[1]
-            # print(f"Track {index}: {reshaped_keypoints}")
-            # Swap y and z coordinates to get x, y, z format
-            reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
-            # Calculate the centroid
-            centroid = np.mean(reshaped_keypoints, axis=1)
-            centralValues.append((centroid, reshaped_keypoints[:, 0]))
-            # print(f"Centroid: {centroid}, Joint 0: {reshaped_keypoints[0]}")
-        return centralValues
     
     
 def transform_measurement(measurement):

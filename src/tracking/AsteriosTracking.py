@@ -1,22 +1,58 @@
+from functools import partial
 import numpy as np
-import constants as const
+from dataclasses import dataclass
 import math
 import time
 from filterpy.kalman import KalmanFilter
-from Utils import (
+from .utils import (
+    altered_EuclideanDist,
     apply_clustering,
     RingBuffer,
-    relative_coordinates,
-    format_single_frame,
 )
-from typing import List
+from typing import List, Callable, Any
 from abc import ABC, abstractmethod
 
-ACTIVE = 1
-INACTIVE = 0
 
-STATIC = True
-DYNAMIC = False
+@dataclass
+class ConstAccModel:
+    KF_DIM: List[int]  # e.g. [9, 6]
+    KF_H: np.ndarray   # Measurement matrix (6x9? Typically defined in the model)
+    KF_F: Callable[[float], np.ndarray]  # Function: dt -> state transition matrix
+    KF_Q_DISCR: Callable[[float], np.ndarray]  # Function: dt -> process noise covariance
+    STATE_VEC: Callable[[np.ndarray], List[float]]  # Function to build the initial state vector
+
+@dataclass
+class AsteriosConfig:
+    motion_model: ConstAccModel
+    FB_FRAMES_BATCH: int
+    FB_FRAMES_BATCH_STATIC: int
+    DB_POINTS_THRES: int
+    DB_SPREAD_THRES: float
+    DB_EPS: float
+    DB_RANGE_WEIGHT: float
+    DB_Z_WEIGHT: float
+    DB_MIN_SAMPLES_MIN: int
+    KF_R_STD: float
+    KF_P_INIT: float
+    KF_GROUP_DISP_EST_INIT: float
+    KF_ENABLE_EST: bool
+    KF_A_N: float
+    KF_EST_POINTNUM: int
+    KF_SPREAD_LIM: List[float]
+    KF_A_SPR: float
+    # MODEL_MIN_INPUT: int
+    # MODEL_DEFAULT_POSTURE: np.ndarray
+    TR_LIFETIME_DYNAMIC: float
+    TR_LIFETIME_STATIC: float
+    TR_GATE: float
+    TR_MAX_TRACKS: int
+    TR_VEL_THRES: float
+
+
+ACTIVE: int = 1
+INACTIVE: int = 0
+STATIC: bool = True
+DYNAMIC: bool = False
 
 
 class BatchedData(RingBuffer):
@@ -36,9 +72,8 @@ class BatchedData(RingBuffer):
     - pop_frame(): Remove the oldest frame from the buffer.
     """
 
-    def __init__(self, init_data=np.empty((0, 8))):
-        super().__init__(const.FB_FRAMES_BATCH + 1, init_val=init_data)
-
+    def __init__(self, batch_size, init_data=np.empty((0, 8))):
+        super().__init__(batch_size, init_val=init_data) # size = const.FB_FRAMES_BATCH + 1
         self.weights = self._compute_weights()  # Compute weights for the frames
         self.effective_data = np.concatenate(self.buffer, axis=0)  # Combine all frames into a single array
 
@@ -121,19 +156,16 @@ class KalmanState(KalmanFilter):
     -------
     - __init__(centroid: np.ndarray): Initialize the Kalman filter with default parameters based on the centroid.
     """
-
-    def __init__(self, centroid: np.ndarray):
-        super().__init__(
-            dim_x=const.MOTION_MODEL.KF_DIM[0], dim_z=const.MOTION_MODEL.KF_DIM[1]
-        )
-
-        self.F = const.MOTION_MODEL.KF_F(1)
-        self.H = const.MOTION_MODEL.KF_H
-        self.Q = const.MOTION_MODEL.KF_Q_DISCR(1)
-        self.R = np.eye(const.MOTION_MODEL.KF_DIM[1]) * const.KF_R_STD**2
-        self.x = np.array([const.MOTION_MODEL.STATE_VEC(centroid)]).T
-        self.P = np.eye(const.MOTION_MODEL.KF_DIM[0]) * const.KF_P_INIT
-
+    def __init__(self, centroid: np.ndarray, config: AsteriosConfig) -> None:
+        self.config = config
+        model = config.motion_model
+        super().__init__(dim_x=model.KF_DIM[0], dim_z=model.KF_DIM[1])
+        self.F = model.KF_F(1)
+        self.H = model.KF_H
+        self.Q = model.KF_Q_DISCR(1)
+        self.R = np.eye(model.KF_DIM[1]) * config.KF_R_STD**2
+        self.x = np.array([model.STATE_VEC(centroid)]).T
+        self.P = np.eye(model.KF_DIM[0]) * config.KF_P_INIT
 
 class PointCluster:
     """
@@ -155,7 +187,7 @@ class PointCluster:
 
     """
 
-    def __init__(self, pointcloud: np.array, polar=False, weights=None, isFrame=False):
+    def __init__(self, pointcloud: np.array, tr_vel_threshold, polar=False, weights=None, isFrame=False):
         """
         Initialize PointCluster with a given pointcloud.
         - pointcloud: Can be either:
@@ -198,7 +230,7 @@ class PointCluster:
             self.max_vals = np.max(self.pointcloud[:, -3:], axis=0)
 
 
-        if velocity < const.TR_VEL_THRES:
+        if velocity < tr_vel_threshold:
             # if pointcloud[6] < const.TR_VEL_THRES:
             self.status = STATIC
         else:
@@ -276,67 +308,53 @@ class ClusterTrack:
 
     """
 
-    def __init__(self, cluster: PointCluster):
-        self.N_est = 0
-        self.spread_est = np.zeros(const.MOTION_MODEL.KF_DIM[1])
-        self.group_disp_est = (
-            np.eye(const.MOTION_MODEL.KF_DIM[1]) * const.KF_GROUP_DISP_EST_INIT
-        )
+    def __init__(self, cluster: "PointCluster", config: AsteriosConfig) -> None:
+        self.config = config
+        model = config.motion_model
+        self.N_est: int = 0
+        self.spread_est: np.ndarray = np.zeros(model.KF_DIM[1])
+        self.group_disp_est: np.ndarray = np.eye(model.KF_DIM[1]) * config.KF_GROUP_DISP_EST_INIT
         self.cluster = cluster
-        self.batch = BatchedData(cluster.pointcloud)
-        self.state = KalmanState(cluster.centroid)
-        self.status = ACTIVE
-        self.lifetime = 0
-        self.keypoints = const.MODEL_DEFAULT_POSTURE
-        # self.height_buffer = RingBuffer(
-        #     const.FB_HEIGHT_FRAME_PERIOD, init_val=self.cluster.max_vals[2] - 0.01
-        # )
-        # self.width_buffer = RingBuffer(const.FB_WIDTH_FRAME_PERIOD)
-        # NOTE: For visualizing purposes only
-        self.predict_x = self.state.x
-        self.color = np.random.rand(
-            3,
-        )
 
-    def _estimate_point_num(self):
+        # Pass the batch size from configuration
+        self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, cluster.pointcloud)
+        self.state = KalmanState(cluster.centroid, config)
+        self.status: int = ACTIVE
+        self.lifetime: int = 0
+        # self.keypoints: np.ndarray = config.MODEL_DEFAULT_POSTURE
+        self.predict_x: np.ndarray = self.state.x
+        self.color: np.ndarray = np.random.rand(3)
+        
+    def _estimate_point_num(self) -> None:
         """
         Estimate the expected number of points in the cluster.
         """
-        if const.KF_ENABLE_EST:
+        if self.config.KF_ENABLE_EST:
             if self.cluster.point_num > self.N_est:
                 self.N_est = self.cluster.point_num
             else:
-                self.N_est = (
-                    1 - const.KF_A_N
-                ) * self.N_est + const.KF_A_N * self.cluster.point_num
+                self.N_est = ((1 - self.config.KF_A_N) * self.N_est +
+                            self.config.KF_A_N * self.cluster.point_num)
         else:
-            self.N_est = max(const.KF_EST_POINTNUM, self.cluster.point_num)
+            self.N_est = max(self.config.KF_EST_POINTNUM, self.cluster.point_num)
 
-    def _estimate_measurement_spread(self):
+    def _estimate_measurement_spread(self) -> None:
         """
         Estimate the spread of measurements in each dimension.
         """
         for m in range(len(self.cluster.min_vals)):
             spread = self.cluster.max_vals[m] - self.cluster.min_vals[m]
-
-            # Unbiased spread estimation
             if self.cluster.point_num != 1:
-                spread = (
-                    spread * (self.cluster.point_num + 1) / (self.cluster.point_num - 1)
-                )
-
-            # Ensure the computed spread estimation is between 1x and 2x of configured limits
-            spread = min(2 * const.KF_SPREAD_LIM[m], spread)
-            spread = max(const.KF_SPREAD_LIM[m], spread)
-
+                spread = spread * (self.cluster.point_num + 1) / (self.cluster.point_num - 1)
+            spread = min(2 * self.config.KF_SPREAD_LIM[m], spread)
+            spread = max(self.config.KF_SPREAD_LIM[m], spread)
             if spread > self.spread_est[m]:
                 self.spread_est[m] = spread
             else:
-                self.spread_est[m] = (1.0 - const.KF_A_SPR) * self.spread_est[
-                    m
-                ] + const.KF_A_SPR * spread
+                self.spread_est[m] = ((1.0 - self.config.KF_A_SPR) * self.spread_est[m] +
+                                    self.config.KF_A_SPR * spread)
 
-    def _get_D(self):
+    def _get_D(self) -> np.ndarray:
         """
         Calculate and get the dispersion matrix for the track.
 
@@ -345,20 +363,17 @@ class ClusterTrack:
         numpy.ndarray
             Dispersion matrix for the cluster.
         """
-        dimension = const.MOTION_MODEL.KF_DIM[1]
+        dimension = self.config.motion_model.KF_DIM[1]
         pointcloud = self.cluster.pointcloud
         centroid = self.cluster.centroid
-        disp = np.zeros((dimension, dimension), dtype="float")
-
+        disp = np.zeros((dimension, dimension), dtype=float)
         for i in range(dimension):
             for j in range(dimension):
-                disp[i, j] = np.mean(
-                    (pointcloud[:, i] - centroid[i]) * (pointcloud[:, j] - centroid[j])
-                )
-
+                disp[i, j] = np.mean((pointcloud[:, i] - centroid[i]) *
+                                    (pointcloud[:, j] - centroid[j]))
         return disp
-
-    def _estimate_group_disp_matrix(self):
+    
+    def _estimate_group_disp_matrix(self) -> None:
         """
         Estimate the group dispersion matrix.
         """
@@ -376,11 +391,9 @@ class ClusterTrack:
         """
         N = self.cluster.point_num
         N_est = self.N_est
-        return (self.get_Rm() / N) + (
-            (N_est - N) / ((N_est - 1) * N)
-        ) * self.group_disp_est
+        return (self.get_Rm() / N) + (((N_est - N) / ((N_est - 1) * N)) * self.group_disp_est)
 
-    def associate_pointcloud(self, pointcloud: np.array, useBatch=False):
+    def associate_pointcloud(self, pointcloud: np.array) -> None:
         """
         Associate a point cloud with the track.
 
@@ -400,15 +413,9 @@ class ClusterTrack:
 
         """
         # This is the original code. No temporal fusion is done here.
-        if not useBatch:
-            self.cluster = PointCluster(pointcloud)
-            self.batch.add_frame(self.cluster.pointcloud)
-        else:
-            # Modified code
-            self.batch.add_frame(pointcloud)
-            (fusedPointcloud, weights) = self.batch._compute_effective_data()
-            self.cluster = PointCluster(fusedPointcloud, weights=weights, isFrame=True)
-
+        self.cluster = PointCluster(pointcloud, tr_vel_threshold=self.config.TR_VEL_THRES)
+        # Add the new frame to the batch
+        self.batch.add_frame(self.cluster.pointcloud)
         self._estimate_point_num()
         self._estimate_measurement_spread()
         self._estimate_group_disp_matrix()
@@ -431,7 +438,7 @@ class ClusterTrack:
         #     )
         # )
 
-    def get_Rm(self):
+    def get_Rm(self) -> np.ndarray:
         """
         Get the measurement covariance matrix
 
@@ -442,7 +449,7 @@ class ClusterTrack:
         """
         return np.diag(((self.spread_est / 2) ** 2))
 
-    def predict_state(self, dt: float):
+    def predict_state(self, dt: float) -> None:
         """
         Predict the state of the Kalman filter based on the time multiplier.
 
@@ -452,25 +459,22 @@ class ClusterTrack:
             Time multiplier for the prediction.
         """
         self.state.predict(
-            F=const.MOTION_MODEL.KF_F(dt),
-            Q=const.MOTION_MODEL.KF_Q_DISCR(dt),
+            F=self.config.motion_model.KF_F(dt),
+            Q=self.config.motion_model.KF_Q_DISCR(dt),
         )
         self.predict_x = self.state.x
 
-    def update_state(self):
+    def update_state(self) -> None:
         """
         Update the state of the Kalman filter based on the associated measurement (pointcloud centroid).
         """
         z = np.array(self.cluster.centroid)
-        x_prev = self.state.x[:2, 0]
         self.state.update(z, R=self._get_Rc())
-
-        # If the variance between the predicted and measured position
         variance = z[:1] - self.state.x[:1, 0]
         if abs(variance.any()) > 0.6 and self.lifetime == 0:
             self.state.x[:1, 0] += variance * 0.4
 
-    def update_lifetime(self, dt, reset=False):
+    def update_lifetime(self, dt, reset=False) -> None:
         """
         Update the track lifetime.
         """
@@ -479,7 +483,7 @@ class ClusterTrack:
         else:
             self.lifetime += dt
 
-    def seek_inner_clusters(self):
+    def seek_inner_clusters(self) -> List:
         """
         Seek inner clusters within the current cluster.
 
@@ -495,29 +499,21 @@ class ClusterTrack:
 
         new_track_clusters = []
         spread = self.cluster.max_vals[:1] - self.cluster.min_vals[:1]
-        if (
-            self.cluster.point_num > const.DB_POINTS_THRES
-            and spread.any() > const.DB_SPREAD_THRES
-        ):
-            # Allow frame fusion for better resolution
-            # NOTE: State machine is better here
+        if (self.cluster.point_num > self.config.DB_POINTS_THRES and
+            spread.any() > self.config.DB_SPREAD_THRES):
             if self.cluster.status == STATIC:
-                self.batch.change_buffer_size(const.FB_FRAMES_BATCH_STATIC)
+                # Change batch size for static clusters
+                while len(self.batch.buffer) > self.config.FB_FRAMES_BATCH_STATIC:
+                    self.batch.buffer.popleft()
             else:
-                self.batch.change_buffer_size(const.FB_FRAMES_BATCH)
-
+                while len(self.batch.buffer) > self.config.FB_FRAMES_BATCH:
+                    self.batch.buffer.popleft()
             self.batch.add_frame(self.cluster.pointcloud)
-            pointcloud = self.batch.effective_data
-
-            # Apply clustering to identify inner clusters
-            track_clusters = apply_DBscan(
-                pointcloud=pointcloud,
-                eps=const.DB_INNER_EPS,
-            )
-
+            pointcloud = np.concatenate(list(self.batch.buffer), axis=0)
+            # Use DBSCAN with the configured inner eps
+            track_clusters = apply_clustering(pointcloud, method="DBSCAN")
             if len(track_clusters) > 1:
                 new_track_clusters = [track_clusters[1]]
-
         return new_track_clusters
 
 
@@ -530,13 +526,13 @@ class Tracker(ABC):
     def track(self, pointcloud, batch, clusteringAlgorithm="DBSCAN"):
         pass
 
-    @abstractmethod
-    def estimate_posture(self, model):
-        pass
+    # @abstractmethod
+    # def estimate_posture(self, model):
+    #     pass
 
-    @abstractmethod
-    def update_real_posture(self, real_data):
-        pass
+    # @abstractmethod
+    # def update_real_posture(self, real_data):
+    #     pass
 
 class TrackBuffer(Tracker):
     """
@@ -590,34 +586,29 @@ class TrackBuffer(Tracker):
         Estimate the posture of each track in the buffer using a CNN model.
 
     """
-
-    def __init__(self, usePalmar=False):
+       
+    def __init__(self, config: AsteriosConfig, usePalmar: bool = False) -> None:
         """
         Initialize TrackBuffer with empty lists for tracks and effective tracks.
         """
+        self.config = config
         self.effective_tracks: List[ClusterTrack] = []
-        self.next_track_id = 0
-        self.dt = 0
-        self.t = time.time()
+        self.next_track_id: int = 0
+        self.dt: float = 0
+        self.t: float = time.time()
 
-    def _maintain_tracks(self):
+    def _maintain_tracks(self) -> None:
         """
         Update the status of tracks based on their mobility and lifetime. Then update the list of effective tracks.
         """
         for track in self.effective_tracks:
-            if track.cluster.status == DYNAMIC:
-                lifetime = const.TR_LIFETIME_DYNAMIC
-            else:
-                lifetime = const.TR_LIFETIME_STATIC
-
+            lifetime = (self.config.TR_LIFETIME_DYNAMIC if track.cluster.status == DYNAMIC 
+                        else self.config.TR_LIFETIME_STATIC)
             if track.lifetime > lifetime:
                 track.status = INACTIVE
+        self.effective_tracks[:] = [track for track in self.effective_tracks if track.status != INACTIVE]
 
-        self.effective_tracks[:] = [
-            track for track in self.effective_tracks if track.status != INACTIVE
-        ]
-
-    def _calc_dist_fun(self, full_set: np.array):
+    def _calc_dist_fun(self, full_set: np.array) -> np.ndarray:
         """
         Calculate the Mahalanobis distance matrix for gating.
 
@@ -634,36 +625,22 @@ class TrackBuffer(Tracker):
         """
         dist_matrix = np.empty((full_set.shape[0], len(self.effective_tracks)))
         associated_track_for = np.full(full_set.shape[0], None, dtype=object)
-
         for j, track in enumerate(self.effective_tracks):
-            H_i = np.dot(const.MOTION_MODEL.KF_H, track.state.x).flatten()
-            # Group residual covariance matrix
+            H_i = np.dot(self.config.motion_model.KF_H, track.state.x).flatten()
             C_g_j = track.state.P[:6, :6] + track.get_Rm() + track.group_disp_est
-
             for i, point in enumerate(full_set):
-                # Innovation for each measurement
                 y_ij = np.array(point[:6]) - H_i
-
-                # Distance function (d^2)
-                dist_matrix[i][j] = np.log(np.abs(np.linalg.det(C_g_j))) + np.dot(
-                    np.dot(y_ij.T, np.linalg.inv(C_g_j)), y_ij
-                )
-
-                # Perform Gate threshold check
-                if dist_matrix[i][j] < const.TR_GATE:
-                    # Just choose the closest mahalanobis distance
+                dist_matrix[i][j] = (np.log(np.abs(np.linalg.det(C_g_j))) +
+                                    np.dot(np.dot(y_ij.T, np.linalg.inv(C_g_j)), y_ij))
+                if dist_matrix[i][j] < self.config.TR_GATE:
                     if associated_track_for[i] is None:
                         associated_track_for[i] = j
                     else:
-                        if (
-                            dist_matrix[i][j]
-                            < dist_matrix[i][int(associated_track_for[i])]
-                        ):
+                        if dist_matrix[i][j] < dist_matrix[i][int(associated_track_for[i])]:
                             associated_track_for[i] = j
-
         return associated_track_for
 
-    def _add_tracks(self, new_clusters):
+    def _add_tracks(self, new_clusters: List[np.array]) -> None:
         """
         Add new tracks to the buffer.
 
@@ -673,26 +650,25 @@ class TrackBuffer(Tracker):
             List of new clusters to be added as tracks.
         """
         for new_cluster in new_clusters:
-            new_track = ClusterTrack(PointCluster(np.array(new_cluster)))
-            # new_track.id = self.next_track_id
+            new_track = ClusterTrack(PointCluster(np.array(new_cluster), tr_vel_threshold=self.config.TR_VEL_THRES), self.config)
             self.next_track_id += 1
             self.effective_tracks.append(new_track)
 
-    def _predict_all(self):
+    def _predict_all(self) -> None:
         """
         Predict the state of all effective tracks.
         """
         for track in self.effective_tracks:
             track.predict_state(track.lifetime + self.dt)
 
-    def _update_all(self):
+    def _update_all(self) -> None:
         """
         Update the state of all effective tracks.
         """
         for track in self.effective_tracks:
             track.update_state()
 
-    def _get_gated_clouds(self, full_set: np.array):
+    def _get_gated_clouds(self, full_set: np.array) -> tuple[np.ndarray, List[List[np.array]]]:
         """
         Split the pointcloud according to the formed gates and return gated and unassigned clouds.
 
@@ -706,11 +682,9 @@ class TrackBuffer(Tracker):
         tuple
             Tuple containing unassigned points and clustered clouds.
         """
-        unassigned = np.empty((0, 8), dtype="float")
+        unassigned = np.empty((0, 8), dtype=float)
         clusters = [[] for _ in range(len(self.effective_tracks))]
-        # Simple matrix has len = len(full_set) and has the index of the chosen track.
         associated_track_for = self._calc_dist_fun(full_set)
-
         for i, point in enumerate(full_set):
             if associated_track_for[i] is None:
                 unassigned = np.append(unassigned, [point], axis=0)
@@ -718,7 +692,7 @@ class TrackBuffer(Tracker):
                 clusters[associated_track_for[i]].append(point)
         return unassigned, clusters
 
-    def _associate_points_to_tracks(self, full_set: np.array):
+    def _associate_points_to_tracks(self, full_set: np.array) -> np.ndarray:
         """
         Associate points to existing tracks and handle inner cluster separation.
 
@@ -734,26 +708,17 @@ class TrackBuffer(Tracker):
         """
         unassigned, clouds = self._get_gated_clouds(full_set)
         new_inner_clusters = []
-        print("received points: ", len(full_set), " unassigned: ", len(unassigned))
         for j, track in enumerate(self.effective_tracks):
             if len(clouds[j]) == 0:
-                # If no points are associated with the track, just update the lifetime
                 track.update_lifetime(dt=self.dt)
             else:
-                # If points are associated with the track, update the lifetime and associate the pointcloud
                 track.update_lifetime(dt=self.dt, reset=True)
-                track.associate_pointcloud(np.array(clouds[j]), useBatch=True)
-
-                # inner cluster separation
-                # new_inner_clusters.append(track.seek_inner_clusters())
-
-        # In case inner clusters are found, create new tracks for them
+                track.associate_pointcloud(np.array(clouds[j]))
         for inner_cluster in new_inner_clusters:
             self._add_tracks(inner_cluster)
-
         return unassigned
 
-    def track(self, pointcloud, batch: BatchedData, clusteringAlgorithm="DBSCAN"):
+    def track(self, pointcloud: np.array, batch: RingBuffer, clusteringAlgorithm: str = "DBSCAN") -> None:
         """
         Perform the tracking process including prediction, association, maintenance, update, and clustering.
 
@@ -769,97 +734,78 @@ class TrackBuffer(Tracker):
         -------
         None
         """
-        if (clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]):
+        if clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]:
             raise ValueError("Invalid clustering algorithm. Please use 'DBSCAN', 'BIRCH', or 'both'.")
-
-        # Prediction Step. This modifies only the kalman state of the tracks
         self._predict_all()
-
-        # Association Step
         unassigned = self._associate_points_to_tracks(pointcloud)
         self._maintain_tracks()
-
-        # Update Step
         self._update_all()
-
-        # Clustering of the remainder points Step
         new_clusters = []
         batch.add_frame(unassigned)
-
-        if (len(batch.effective_data) > 0 and len(self.effective_tracks) < const.TR_MAX_TRACKS):
-            new_clusters = apply_clustering(
-                batch.effective_data, clusteringAlgorithm
-            )
-            if len(new_clusters) > 0:
-                batch.clear()
-
-            # Create new track for every new cluster
+        effective_data = np.concatenate(list(batch.buffer), axis=0)
+        if (effective_data.size > 0 and len(self.effective_tracks) < self.config.TR_MAX_TRACKS):
+            new_clusters = apply_clustering(batch.effective_data, 
+                                            clusteringAlgorithm, 
+                                            metric=partial(altered_EuclideanDist,
+                                                db_range_weight=self.config.DB_RANGE_WEIGHT,
+                                                db_z_weight=self.config.DB_Z_WEIGHT),
+                                            eps=self.config.DB_EPS,
+                                            min_samples=self.config.DB_MIN_SAMPLES_MIN,
+                                            )
+            if new_clusters:
+                batch.buffer.clear()
             self._add_tracks(new_clusters)
 
-    def estimate_posture(self, model):
-        """
-        Format the pointcloud, estimate and save the posture of the target of each track using a CNN model.
+    # def estimate_posture(self, model: Any) -> None:
+    #     """
+    #     Format the pointcloud, estimate and save the posture of the target of each track using a CNN model.
 
-        Parameters
-        ----------
-        model : Model
-            The CNN model used for posture estimation.
+    #     Parameters
+    #     ----------
+    #     model : Model
+    #         The CNN model used for posture estimation.
 
-        Returns
-        -------
-        None
-        """
-        frame_matrices = []
-        indexes = []
-        for index, track in enumerate(self.effective_tracks):
-            if len(track.batch.effective_data) > const.MODEL_MIN_INPUT:
-                rel_track_points = relative_coordinates(
-                    list(track.batch.buffer),
-                    track.cluster.centroid[:2],
-                )
-                # The inputs are in the form of [x, y, z, x', y', z', r', s]
-                frame_matrices.append(format_single_frame(rel_track_points))
-                indexes.append(index)
+    #     Returns
+    #     -------
+    #     None
+    #     """
+    #     frame_matrices = []
+    #     indexes = []
+    #     for index, track in enumerate(self.effective_tracks):
+    #         if len(np.concatenate(list(track.batch.buffer), axis=0)) > self.config.MODEL_MIN_INPUT:
+    #             rel_track_points = relative_coordinates(list(track.batch.buffer), track.cluster.centroid[:2])
+    #             frame_matrices.append(format_single_frame(rel_track_points))
+    #             indexes.append(index)
+    #     frame_matrices_array = np.array(frame_matrices)
+    #     if frame_matrices_array.size > 0:
+    #         frame_keypoints = model.predict(frame_matrices_array)
+    #         for i, idx in enumerate(indexes):
+    #             self.effective_tracks[idx].keypoints = frame_keypoints[i]
 
-        frame_matrices_array = np.array(frame_matrices)
-        if len(frame_matrices_array) > 0:
-            frame_keypoints = model.predict(frame_matrices_array)
-            for i, index in enumerate(indexes):
-                self.effective_tracks[index].keypoints = frame_keypoints[i]
+    # def update_real_posture(self, real_data: np.array) -> List[tuple]:
+    #     """
+    #     Update the real posture of the target of each track using the real data.
 
-    def update_real_posture(self, real_data):
-        """
-        Update the real posture of the target of each track using the real data.
+    #     Parameters
+    #     ----------
+    #     real_data : np.array
+    #         Real data for posture estimation.
 
-        Parameters
-        ----------
-        real_data : np.array
-            Real data for posture estimation.
-
-        Returns
-        -------
-        An array of tuples containing the centroid and joint 0 of each track. They will be reformatted to (x, y, z) as the coordinate system is like that.
-        """
-        centralValues = []
-        for index, track in enumerate(self.effective_tracks):
-            try:
-                kinect_coords = real_data[index]
-              
-            except:
-                print("Warning. No more than one skeleton detected, showing the same skeleton for all tracks. ", time.time())
-                kinect_coords = real_data[0]
-            track.ground_truth = np.array(kinect_coords)
-            reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
-
-            reshaped_keypoints[0] *= -1
-            # reshaped_keypoints[0] += track.state.x[0]
-            # reshaped_keypoints[2] += track.state.x[1]
-            # print(f"Track {index}: {reshaped_keypoints}")
-            # Swap y and z coordinates to get x, y, z format
-            reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
-            # Calculate the centroid
-            centroid = np.mean(reshaped_keypoints, axis=1)
-            centralValues.append((centroid, reshaped_keypoints[:, 0]))
-            # print(f"Centroid: {centroid}, Joint 0: {reshaped_keypoints[0]}")
-        return centralValues
-
+    #     Returns
+    #     -------
+    #     An array of tuples containing the centroid and joint 0 of each track. They will be reformatted to (x, y, z) as the coordinate system is like that.
+    #     """
+    #     centralValues = []
+    #     for index, track in enumerate(self.effective_tracks):
+    #         try:
+    #             kinect_coords = real_data[index]
+    #         except Exception:
+    #             print("Warning. No more than one skeleton detected; using the same skeleton for all tracks.", time.time())
+    #             kinect_coords = real_data[0]
+    #         track.ground_truth = np.array(kinect_coords)
+    #         reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
+    #         reshaped_keypoints[0] *= -1
+    #         reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
+    #         centroid = np.mean(reshaped_keypoints, axis=1)
+    #         centralValues.append((centroid, reshaped_keypoints[:, 0]))
+    #     return centralValues

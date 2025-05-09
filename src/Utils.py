@@ -340,7 +340,7 @@ def calc_projection_points(x_origin, y_origin, z_origin):
     return x_proj, z_proj
 
 
-def altered_EuclideanDist(p1, p2):
+def altered_EuclideanDist(p1, p2, db_range_weight=0.03, db_z_weight=0.4):
     """
     Calculate an altered Euclidean distance between two points in 3D space.
 
@@ -360,15 +360,15 @@ def altered_EuclideanDist(p1, p2):
     """
     # NOTE: The z-axis has less weight in the distance metric since the sillouette of a person is tall and thin.
     # Also, the further away from the sensor the more sparse the points, so we need a weighing factor
-    weight = 1 - ((p1[1] + p2[1]) / 2) * const.DB_RANGE_WEIGHT
+    weight = 1 - ((p1[1] + p2[1]) / 2) * db_range_weight
     return weight * (
         (p1[0] - p2[0]) ** 2
         + (p1[1] - p2[1]) ** 2
-        + const.DB_Z_WEIGHT * ((p1[2] - p2[2]) ** 2)
+        + db_z_weight * ((p1[2] - p2[2]) ** 2)
     )
 
 
-def apply_DBscan(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_MIN, metric=altered_EuclideanDist):
+def apply_DBscan(pointcloud, eps=0.3, min_samples=35, metric=altered_EuclideanDist):
     """
     Apply DBSCAN clustering to a 3D point cloud using an altered Euclidean distance metric.
 
@@ -393,7 +393,7 @@ def apply_DBscan(pointcloud, eps=const.DB_EPS, min_samples=const.DB_MIN_SAMPLES_
     dbscan = DBSCAN(
         eps=eps,
         min_samples=min_samples,
-        metric=altered_EuclideanDist,
+        metric=metric,
     )
 
     labels = dbscan.fit_predict(pointcloud)
@@ -453,7 +453,7 @@ def apply_Birch(pointcloud, threshold=4, branching_factor=10):
     clusters = list(clustered_points.values())
     return clusters
 
-def apply_clustering(pointcloud, method="DBSCAN", metric=altered_EuclideanDist):
+def apply_clustering(pointcloud, method="DBSCAN", **kwargs):
     """
     Apply a clustering algorithm to a 3D point cloud.
 
@@ -472,7 +472,7 @@ def apply_clustering(pointcloud, method="DBSCAN", metric=altered_EuclideanDist):
         A list of clustered point clouds, where each cluster is represented as a list of points.
     """
     if method == "DBSCAN":
-        return apply_DBscan(pointcloud, metric=metric)
+        return apply_DBscan(pointcloud, **kwargs)
     elif method == "BIRCH":
         return apply_Birch(pointcloud)
     else:
