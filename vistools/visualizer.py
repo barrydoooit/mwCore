@@ -23,7 +23,7 @@ class VisualizerWorker(QObject):
 
 class MainVisualizer(QMainWindow): 
     
-    def __init__(self, parent=None, new_data: Signal = None, on_close: callable = None): 
+    def __init__(self, parent=None, new_data: Signal = None, tracking_mode='dot', on_close: callable = None): 
         super(MainVisualizer, self).__init__(parent)
         self.setWindowTitle("Interactive Radar Point Cloud Visualizer")
         self.resize(800, 600)
@@ -38,7 +38,7 @@ class MainVisualizer(QMainWindow):
         
         # -- Tracking visualization configuration --
         # Choose how to render the tracked location: "dot" or "bbox"
-        self.tracking_mode = "dot"  # Change to "bbox" if you prefer the bounding box
+        self.tracking_mode = tracking_mode
         
         # Create a large red dot for dot mode
         self.tracker_dot = gl.GLScatterPlotItem(size=20, color=(1, 0, 0, 1))
@@ -78,13 +78,12 @@ class MainVisualizer(QMainWindow):
         if len(loc) < 3:
             return
         if to_standard:
-            loc[1] -= 160
+            # loc[1] -= 160
             pass # TODO: change to standard coordinates
         
         centroid = np.array(loc[:3]).reshape((1, 3))
         
         if self.tracking_mode == "dot":
-            # Update the red dot marker
             self.tracker_dot.setData(pos=centroid, size=20, color=(1, 0, 0, 1))
         elif self.tracking_mode == "bbox":
             # For bounding box mode, define a fixed size or compute dynamically

@@ -28,7 +28,9 @@ class OnlineTrackingThread(QThread):
             locations = self.tracker.consume(det_obj)
             self.tracking_data.emit(locations)
             # print(locations)
+
     def run(self):
+        print("Online Tracking Thread started")
         self.exec_()
     
     

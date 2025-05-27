@@ -29,7 +29,7 @@ class OnlineReaderThread(QThread):
                 
     def _raw_to_numpy(self, det_obj: Dict[str, np.ndarray]):
         data = np.stack([det_obj[key] for key in ['x', 'y', 'z', 'doppler', 'peakVal']], axis=-1)
-        print("Num Points Detected: ", data.shape[0])
+        # print("Num Points Detected: ", data.shape[0])
         return data
         
     def terminate(self):
