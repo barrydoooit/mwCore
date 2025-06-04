@@ -1,7 +1,7 @@
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-
+from pyqtgraph.opengl import GLAxisItem
 from .graph_utilities import eulerRot, getBoxArcs, getBoxArcs2D ,getBoxLines, getSquareLines
 
 # Different methods to color the points 
@@ -21,8 +21,20 @@ class Plot3D():
         gz = gl.GLGridItem()
         self.plot_3d.addItem(gz)
 
+        # manual RGB axes
+        size = 5.0
+        # X axis (pure red)
+        x = np.array([[0,0,0], [size,0,0]])
+        self.plot_3d.addItem(gl.GLLinePlotItem(pos=x, color=(1,0,0,1), width=3, antialias=True))
+        # Y axis (pure green)
+        y = np.array([[0,0,0], [0,size,0]])
+        self.plot_3d.addItem(gl.GLLinePlotItem(pos=y, color=(0,1,0,1), width=3, antialias=True))
+        # Z axis (pure blue)
+        z = np.array([[0,0,0], [0,0,size]])
+        self.plot_3d.addItem(gl.GLLinePlotItem(pos=z, color=(0,0,1,1), width=3, antialias=True))
+        
         # Create scatter plot for point cloud
-        self.scatter = gl.GLScatterPlotItem(size=5)
+        self.scatter = gl.GLScatterPlotItem()
         self.scatter.setData(pos=np.zeros((1,3)))
         self.plot_3d.addItem(self.scatter)
         self.boundaryBoxList = []
@@ -40,17 +52,17 @@ class Plot3D():
         self.elev_tilt = 0
     
         # Create box to represent EVM
-        evmSizeX = 0.0625
-        evmSizeZ = 0.125
-        verts = np.empty((2,3,3))
-        verts[0,0,:] = [-evmSizeX, 0, evmSizeZ]
-        verts[0,1,:] = [-evmSizeX,0,-evmSizeZ]
-        verts[0,2,:] = [evmSizeX,0,-evmSizeZ]
-        verts[1,0,:] = [-evmSizeX, 0, evmSizeZ]
-        verts[1,1,:] = [evmSizeX, 0, evmSizeZ]
-        verts[1,2,:] = [evmSizeX, 0, -evmSizeZ]
-        self.evmBox = gl.GLMeshItem(vertexes=verts,smooth=False,drawEdges=True,edgeColor=pg.glColor('r'),drawFaces=False)
-        self.plot_3d.addItem(self.evmBox)
+        # evmSizeX = 0.0625
+        # evmSizeZ = 0.125
+        # verts = np.empty((2,3,3))
+        # verts[0,0,:] = [-evmSizeX, 0, evmSizeZ]
+        # verts[0,1,:] = [-evmSizeX,0,-evmSizeZ]
+        # verts[0,2,:] = [evmSizeX,0,-evmSizeZ]
+        # verts[1,0,:] = [-evmSizeX, 0, evmSizeZ]
+        # verts[1,1,:] = [evmSizeX, 0, evmSizeZ]
+        # verts[1,2,:] = [evmSizeX, 0, -evmSizeZ]
+        # self.evmBox = gl.GLMeshItem(vertexes=verts,smooth=False,drawEdges=True,edgeColor=pg.glColor('r'),drawFaces=False)
+        # self.plot_3d.addItem(self.evmBox)
 
         # Initialize other elements
         self.boundaryBoxViz = []

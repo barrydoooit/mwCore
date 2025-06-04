@@ -1,5 +1,5 @@
 import time
-from typing import List
+from typing import List, Optional
 import numpy as np
 from mwcore.registry import TRACKERS
 from mwcore.tracking.src.algs.gtrack import BatchedData
@@ -17,7 +17,7 @@ class RKFTracker(BaseTracker):
                  keep_radial: bool,
                  do_dev2standard: bool,
                  tracker_params: dict,
-                 radar_cfg: dict,
+                 radar_cfg: Optional[dict] = None,
                  result_in_polar: bool = False):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
@@ -28,8 +28,8 @@ class RKFTracker(BaseTracker):
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
-    def consume(self, det_obj: dict):
-        effective_data = self.normalize_data(det_obj=det_obj, keepRadial=self.keep_radial, transform=self.do_dev2standard)
+    def consume(self, det_obj: dict = None, point_array: np.ndarray = None):
+        effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=self.do_dev2standard)
         now = time.time()
         dt = now - self.last_time
         self.last_time = now

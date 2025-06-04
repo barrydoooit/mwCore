@@ -1,4 +1,5 @@
 import time
+from typing import Optional
 import numpy as np
 from scipy.linalg import block_diag
 from filterpy.common import Q_discrete_white_noise
@@ -15,7 +16,7 @@ class GTrackTracker(BaseTracker):
     def __init__(self,
                  keep_radial: bool,
                  tracker_params: dict,
-                 radar_cfg: dict):
+                 radar_cfg: Optional[dict] = None):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
         self.config = make_config_gtrack(tracker_params)
@@ -23,8 +24,8 @@ class GTrackTracker(BaseTracker):
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
-    def consume(self, det_obj: dict):
-        effective_data = self.normalize_data(det_obj=det_obj, keepRadial=self.keep_radial, transform=True)
+    def consume(self, det_obj: dict = None, point_array: np.ndarray = None):
+        effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=True)
         now = time.time()
         dt = now - self.last_time
         self.last_time = now
