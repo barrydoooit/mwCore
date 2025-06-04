@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mwcore"
+version = "0.0.0"
+description = "Short description of mwcore package"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name="Barry Ding", email="barrydoooit@gmail.com" }
+]
+dependencies = [
+    "filterpy==1.4.5",
+    "mmengine==0.10.7",
+    "networkx==3.4.2",
+    "numpy>=1.24",
+    "pyqtgraph==0.13.7",
+    "pyserial==3.5",
+    "PySide2==5.15.2.1",
+    "PySide2==5.15.2.1",
+    "scikit_learn==1.6.1",
+    "scipy==1.15.3",
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mwcore*"]
+exclude = ["tests", "docs"]

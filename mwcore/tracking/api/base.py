@@ -1,6 +1,6 @@
 from copy import deepcopy
 import math
-from typing import Protocol
+from typing import Optional, Protocol
 import numpy as np
 
 from mwcore.utils.tranforms import dev2standard
@@ -16,7 +16,11 @@ class BaseTracker(TrackingFunctionality):
     def __init__(self, radar_cfg: dict):
         self.radar_cfg = deepcopy(radar_cfg)
     
-    def normalize_data(self, det_obj, keepRadial=False, transform=True):
+    def normalize_data(self, 
+                       det_obj: Optional[dict] = None, 
+                       point_array: Optional[np.ndarray] = None, 
+                       keepRadial: bool = False, 
+                       transform: bool = True):
         """
         Preprocesses the point cloud data from the sensor.
 
@@ -32,10 +36,14 @@ class BaseTracker(TrackingFunctionality):
             - "z": z-coordinate
             - "doppler": Doppler velocity
             - "peakVal": Signal Intensity
-            
+        point_array : np.ndarray, optional
+            If provided, this array should contain the point cloud data in the format:
+            [[x1, y1, z1, doppler1, peakVal1],
+             [x2, y2, z2, doppler2, peakVal2], ...]
+        transform : bool, optional
+            If True, applies a transformation to the points to align them with the standard vertical-horizontal plane axis system.
         keepRadial : bool, optional
         If True, retains the original radial measurements (r, θ, ṙ) alongside Cartesian-transformed values.
-
 
         Returns
         -------
@@ -51,9 +59,13 @@ class BaseTracker(TrackingFunctionality):
             - doppler
             - peakval
         """
-        input_data = np.vstack(
-            (det_obj["x"], det_obj["y"], det_obj["z"], det_obj["doppler"], det_obj["peakVal"])
-        ).T
+        if det_obj is not None:
+            input_data = np.vstack(
+                (det_obj["x"], det_obj["y"], det_obj["z"], det_obj["doppler"], det_obj["peakVal"])
+            ).T
+        if point_array is not None:
+            input_data = point_array
+        
         ef_data = np.empty((0, 8), dtype="float") if not keepRadial else np.empty((0, 11), dtype="float")
 
         for index in range(len(input_data)):
