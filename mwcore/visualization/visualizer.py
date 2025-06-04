@@ -8,22 +8,14 @@ from .plot_3d import Plot3D  # Reuse the Plot3D class from plot_3d.py
 
 
 
-class VisualizerWorker(QObject):
-    update_cloud = Signal(np.ndarray)
-    
-    def __init__(self, plot_3d):
-        super().__init__()
-        self.plot_3d = plot_3d
-        self.update_cloud.connect(self._update_scatter)
-    
-    def _update_scatter(self, point_cloud):
-        self.plot_3d.scatter.setData(pos=point_cloud)
-        
-        QApplication.processEvents()
 
-class MainVisualizer(QMainWindow): 
-    
-    def __init__(self, parent=None, tracking_mode: Optional[Literal['dot', 'bbox']] = None, on_close: callable = None): 
+class MainVisualizer(QMainWindow):    
+    def __init__(
+        self,
+        parent=None,
+        tracking_mode: Optional[Literal['dot', 'bbox']] = None,
+        on_close: callable = None
+    ):
         super(MainVisualizer, self).__init__(parent)
         self.setWindowTitle("Interactive Radar Point Cloud Visualizer")
         self.resize(800, 600)
@@ -34,51 +26,68 @@ class MainVisualizer(QMainWindow):
         
         # -- Tracking visualization configuration --
         self.tracking_mode = tracking_mode
-        if self.tracking_mode is not None and self.tracking_mode in ['dot', 'bbox']:
-        # Create a large red dot for dot mode
-            if self.tracking_mode == "bbox":
-                # Create a bounding box for bbox mode
-                self.tracker_box = None
-            elif self.tracking_mode == "dot":
-                self.tracker_dot = gl.GLScatterPlotItem(size=20, color=(1, 0, 0, 1))
-                self.tracker_dot.setData(pos=np.zeros((1, 3)))
-                self.plot3d.plot_3d.addItem(self.tracker_dot)
+        
+        # A small palette of RGBA colors we’ll cycle through:
+        self._color_palette = [
+            (1.0, 0.0, 0.0, 1.0),   # red
+            (0.0, 1.0, 0.0, 1.0),   # green
+            (0.0, 0.0, 1.0, 1.0),   # blue
+            (1.0, 1.0, 0.0, 1.0),   # yellow
+            (1.0, 0.0, 1.0, 1.0),   # magenta
+            (0.0, 1.0, 1.0, 1.0),   # cyan
+            (1.0, 0.5, 0.0, 1.0),   # orange
+            (0.5, 0.0, 1.0, 1.0),   # purple
+        ]
+        
+        if self.tracking_mode == "dot":
+            # Create an (initially empty) scatter item; we'll give it all points/colors in update_tracking
+            self.tracker_dot = gl.GLScatterPlotItem(
+                pos=np.zeros((0, 3)), 
+                size=20, 
+                color=np.zeros((0, 4))
+            )
+            self.plot3d.plot_3d.addItem(self.tracker_dot)
+        
+        elif self.tracking_mode == "bbox":
+            # We'll maintain a list of GLLinePlotItems—one per tracked object
+            self.tracker_boxes: List[gl.GLLinePlotItem] = []
         
         self._on_close = on_close
 
-    def update_point_cloud(self, 
-                           point_cloud,
-                           trans_matrix: Optional[np.ndarray] = None):
+    def update_point_cloud(
+        self, 
+        point_cloud: np.ndarray,
+        trans_matrix: Optional[np.ndarray] = None
+    ):
         # Update the scatter plot in Plot3D with the new point cloud data
-        if point_cloud.shape[1] > 3:
-            point_cloud = point_cloud[:, :3]
+        pts = point_cloud.copy()
+        if pts.shape[1] > 3:
+            pts = pts[:, :3]
         if trans_matrix is not None and trans_matrix.shape == (4, 4):
-            ones_col = np.ones((point_cloud.shape[0], 1), dtype=float)
-            hom_coords = np.hstack([point_cloud, ones_col])  # shape (N, 4)
-            transformed_hom = (trans_matrix @ hom_coords.T).T  # shape (N, 4)
-            point_cloud = transformed_hom[:, :3]
-            
-        self.plot3d.scatter.setData(pos=point_cloud)
-        
-    def update_tracking(self, 
-                        location: Union[np.ndarray, List[List[float]]], 
-                        trans_matrix: Optional[np.ndarray] = None):
+            ones_col = np.ones((pts.shape[0], 1), dtype=float)
+            hom_coords = np.hstack([pts, ones_col])         # (N,4)
+            transformed_hom = (trans_matrix @ hom_coords.T).T
+            pts = transformed_hom[:, :3]
+        self.plot3d.scatter.setData(pos=pts)
+
+    def update_tracking(
+        self, 
+        location: Union[np.ndarray, List[List[float]]], 
+        trans_matrix: Optional[np.ndarray] = None
+    ):
         """
-        Slot that receives the tracking result (location) emitted by the tracking thread.
-        
-        Parameters:
-        - location: A numpy array or list of locations; each location is assumed to have at least
-        three components (x, y, z). For simplicity, this example uses the first location if multiple are provided.
+        Now plots *all* tracked locations in a single call.
+        - If multiple points are given, we reshape into an (N,≥3) array.
+        - Each point gets a color from self._color_palette, cycling if needed.
         """
-        # In this example, we only handle the first tracked location
+        # Handle None or invalid inputs
         if location is None:
             return
-        
-        # Convert `location` into a 2D numpy array `loc_arr` of shape (N, ≥3)
+
+        # Convert `location` into a numpy array `loc_arr` of shape (N, ≥3)
         if isinstance(location, np.ndarray):
             arr = location.astype(float)
             if arr.ndim == 1 and arr.size >= 3:
-                # Single point: reshape to (1, ≥3)
                 loc_arr = arr.reshape(1, -1)
             elif arr.ndim == 2 and arr.shape[1] >= 3 and arr.shape[0] > 0:
                 loc_arr = arr
@@ -92,62 +101,91 @@ class MainVisualizer(QMainWindow):
                 loc_arr = np.vstack([np.asarray(pt, dtype=float) for pt in location])
             except Exception:
                 return
-            # Now loc_arr is (N, M). Ensure M ≥ 3 and N ≥ 1
             if loc_arr.ndim != 2 or loc_arr.shape[1] < 3 or loc_arr.shape[0] == 0:
                 return
         else:
             return
 
-
+        # Apply the same transformation (if provided) to all points
         if trans_matrix is not None and trans_matrix.shape == (4, 4):
-            # Build homogeneous coordinates for all points: shape (N, 4)
-            ones_col = np.ones((loc_arr.shape[0], 1), dtype=float)
-            hom_coords = np.hstack([loc_arr[:, :3], ones_col])  # (N, 4)
+            ones = np.ones((loc_arr.shape[0], 1), dtype=float)
+            hom = np.hstack([loc_arr[:, :3], ones])  # (N,4)
+            transformed = (trans_matrix @ hom.T).T  # (N,4)
+            loc_arr = transformed[:, :3]
 
-            # Apply transform: (4×4) × (4×N) → (4×N), then transpose to (N, 4)
-            transformed_hom = (trans_matrix @ hom_coords.T).T
-            # Discard the homogeneous w-component
-            loc_arr = transformed_hom[:, :3]
+        # At this point, loc_arr is shape (N, 3)
+        num_objs = loc_arr.shape[0]
+        if num_objs == 0:
+            return
 
-        # Visualize only the first point (centroid) as before
-        centroid = loc_arr[0, :3].reshape((1, 3))
-        
         if self.tracking_mode == "dot":
-            self.tracker_dot.setData(pos=centroid, size=20, color=(1, 0, 0, 1))
+            # For dot mode: send *all* points + an (N,4) array of colors
+            centroids = loc_arr[:, :3]  # shape (N,3)
+
+            # Build an (N,4) color array by cycling through the palette
+            color_array = np.zeros((num_objs, 4), dtype=float)
+            palette = self._color_palette
+            P = len(palette)
+            for i in range(num_objs):
+                color_array[i, :] = palette[i % P]
+
+            # Update the scatter item
+            self.tracker_dot.setData(pos=centroids, color=color_array, size=20)
+
         elif self.tracking_mode == "bbox":
-            # For bounding box mode, define a fixed size or compute dynamically
+            # First: remove any existing boxes from the scene
+            for existing_box in getattr(self, 'tracker_boxes', []):
+                self.plot3d.plot_3d.removeItem(existing_box)
+            self.tracker_boxes = []
+
+            # For each tracked object, create one GLLinePlotItem
+            palette = self._color_palette
+            P = len(palette)
             bbox_size = np.array([0.5, 0.5, 0.5])  # fixed size (in meters)
-            cx, cy, cz = centroid.flatten()
-            dx, dy, dz = bbox_size / 2.0
-            # Define the 8 vertices of a cube centered at the centroid
-            vertices = np.array([
-                [cx - dx, cy - dy, cz - dz],
-                [cx - dx, cy - dy, cz + dz],
-                [cx - dx, cy + dy, cz + dz],
-                [cx - dx, cy + dy, cz - dz],
-                [cx + dx, cy - dy, cz - dz],
-                [cx + dx, cy - dy, cz + dz],
-                [cx + dx, cy + dy, cz + dz],
-                [cx + dx, cy + dy, cz - dz]
-            ])
-            # Define edges as pairs of vertex indices
-            edges = [
-                (0, 1), (1, 2), (2, 3), (3, 0),  # left face
-                (4, 5), (5, 6), (6, 7), (7, 4),  # right face
-                (0, 4), (1, 5), (2, 6), (3, 7)   # connectors
-            ]
-            # Collect line segments for each edge
-            lines = []
-            for edge in edges:
-                lines.append(vertices[list(edge), :])
-            concatenated_lines = np.concatenate(lines, axis=0)
-            if self.tracker_box is None:
-                self.tracker_box = gl.GLLinePlotItem()
-                self.tracker_box.setData(pos=concatenated_lines, color=pg.glColor('r'), width=2, antialias=True, mode='lines')
-                self.plot3d.plot_3d.addItem(self.tracker_box)
-            else:
-                self.tracker_box.setData(pos=concatenated_lines, color=pg.glColor('r'), width=2, antialias=True, mode='lines')
-            
+
+            for idx in range(num_objs):
+                cx, cy, cz = loc_arr[idx, :3]
+                dx, dy, dz = bbox_size / 2.0
+
+                # 8 vertices of a cube centered at (cx, cy, cz)
+                vertices = np.array([
+                    [cx - dx, cy - dy, cz - dz],
+                    [cx - dx, cy - dy, cz + dz],
+                    [cx - dx, cy + dy, cz + dz],
+                    [cx - dx, cy + dy, cz - dz],
+                    [cx + dx, cy - dy, cz - dz],
+                    [cx + dx, cy - dy, cz + dz],
+                    [cx + dx, cy + dy, cz + dz],
+                    [cx + dx, cy + dy, cz - dz]
+                ])
+
+                # 12 edges as pairs of vertex indices
+                edges = [
+                    (0, 1), (1, 2), (2, 3), (3, 0),  # left face
+                    (4, 5), (5, 6), (6, 7), (7, 4),  # right face
+                    (0, 4), (1, 5), (2, 6), (3, 7)   # connectors
+                ]
+
+                # Build a (24,3) array where each pair of rows is one line segment
+                lines = []
+                for (v0, v1) in edges:
+                    lines.append(vertices[v0])
+                    lines.append(vertices[v1])
+                concatenated_lines = np.vstack(lines)  # shape (24,3)
+
+                # Pick a color from palette
+                color = palette[idx % P]
+
+                # Create & add a new box item
+                box_item = gl.GLLinePlotItem(
+                    pos=concatenated_lines,
+                    color=color,
+                    width=2,
+                    antialias=True,
+                    mode='lines'
+                )
+                self.plot3d.plot_3d.addItem(box_item)
+                self.tracker_boxes.append(box_item)
     def closeEvent(self, event):
         if self._on_close:
             self._on_close(event)

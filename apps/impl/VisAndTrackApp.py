@@ -14,6 +14,8 @@ from mwcore.visualization.visualizer import MainVisualizer
 if TYPE_CHECKING:
     from mwcore.radario.readers.TI.base import BaseTIBufferedReader
     from mwcore.tracking.api.base import BaseTracker
+    from mwcore.threads.online_tracking import OnlineTrackingThread
+    from mwcore.threads.online_reader import OnlineReaderThread
 
 
 
@@ -25,13 +27,13 @@ class VisAndTrackApp(MWAppRunner):
                  vis_cfg: dict = dict()):
         self.sensor_started = reader_cfg.pop('sensor_started', False)
         self.reader = self._make_reader(reader_cfg)
-        self.reader_thread = THREADS.build(dict(
+        self.reader_thread: 'OnlineReaderThread' = THREADS.build(dict(
             type="OnlineReaderThread",
             reader=self.reader
         ))
         self.tracker_cfg = deepcopy(tracker_cfg)
         self.tracker =  self._make_tracker(tracker_cfg)
-        self.tracker_thread = THREADS.build(dict(
+        self.tracker_thread: 'OnlineTrackingThread' = THREADS.build(dict(
             type="OnlineTrackingThread",
             tracker=self.tracker
         ))

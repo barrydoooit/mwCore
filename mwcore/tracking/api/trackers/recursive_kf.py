@@ -1,4 +1,5 @@
 import time
+from typing import List
 import numpy as np
 from mwcore.registry import TRACKERS
 from mwcore.tracking.src.algs.gtrack import BatchedData
@@ -16,10 +17,12 @@ class RKFTracker(BaseTracker):
                  keep_radial: bool,
                  do_dev2standard: bool,
                  tracker_params: dict,
-                 radar_cfg: dict):
+                 radar_cfg: dict,
+                 result_in_polar: bool = False):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
         self.do_dev2standard = do_dev2standard
+        self.result_in_polar = result_in_polar
         self.config = make_config_rkf(tracker_params)
         self.tracker = RKFTrackBuffer(self.config)
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
@@ -34,8 +37,34 @@ class RKFTracker(BaseTracker):
         if effective_data.shape[0] > 0:
             self.tracker.track(effective_data, self.batch)
         locations = [track.cluster.centroid for track in self.tracker.effective_tracks] # centroid might be in Polar Coordinates
+        if not self.result_in_polar:
+            locations = self.polar_to_cartesian(locations)
         return locations
 
+    def polar_to_cartesian(self, polar_coords: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Convert a list of polar-coordinate centroids [r, θ, ṙ] back to Cartesian (x, y, z).
+        Since we only have range (r) and azimuth (θ), we assume z = 0 in the Cartesian output.
+
+        Parameters
+        ----------
+        polar_coords : List[np.ndarray]
+            List of shape-(3,) arrays, each containing [r, θ, r_dot].
+
+        Returns
+        -------
+        List[np.ndarray]
+            List of shape-(3,) arrays, each containing [x, y, z] in meters.
+        """
+        cartesian_coords = []
+        for p in polar_coords:
+            r, theta, r_dot = p  # unpack range, azimuth, radial velocity (we ignore r_dot here)
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            z = 0.0
+            cartesian_coords.append(np.array([x, y, z]))
+        return cartesian_coords
+    
 def make_config_rkf(raw: dict) -> RKFConfig:
     def RKF_F(dt):
         return np.array([

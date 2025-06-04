@@ -1,5 +1,6 @@
 _base_ = [
-    './trackers/gtrack-A.py',
+    # './trackers/gtrack-A.py',
+    './trackers/rkf.py',
     './readers/6843base.py',
 ]
 type = 'VisAndTrackApp'
