@@ -4,7 +4,10 @@ from typing import Literal, Optional, Tuple, Union
 import numpy as np
 import serial
 
+from ..base import SerialReader
+
 log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
 
 
 
@@ -25,7 +28,7 @@ def bytes_to_int16(b: np.ndarray) -> int:
         raise ValueError("Input array must have exactly 2 bytes for int16 conversion.")
     return np.matmul(b.astype(np.int16), CONVERTER_2BYTES_16BIT)
 
-class BaseTIBufferedReader:
+class BaseTIBufferedReader(SerialReader):
     CLI_BAUDRATE = 115200
     DATA_BAUDRATE = 921600
 

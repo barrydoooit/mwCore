@@ -1,9 +1,9 @@
 import sys
 import time
 import numpy as np
-from .visualizer import MainVisualizer
-from PySide2.QtCore import QThread, Signal
-from PySide2.QtWidgets import QApplication
+from .visualizers.online_pointcloud import OnlinePointCloudVisualizer
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QApplication
 
 
 class DataUpdateThread(QThread): 
@@ -24,7 +24,7 @@ if __name__ == "__main__":
         data_thread.requestInterruption()
         data_thread.wait()
 
-    main_window = MainVisualizer(new_data=data_thread.new_data, on_close=on_close)
+    main_window = OnlinePointCloudVisualizer(new_data=data_thread.new_data, on_close=on_close)
     data_thread.start()
     main_window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

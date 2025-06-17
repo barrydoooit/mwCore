@@ -1,11 +1,11 @@
 import time
 import numpy as np
 from mwcore.registry import THREADS
-from PySide2.QtCore import QThread, Signal, Slot
+from PySide6.QtCore import QThread, Signal, Slot
 
 
 
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Union
 
 if TYPE_CHECKING:
     from mwcore.tracking.api.base import BaseTracker
@@ -15,10 +15,13 @@ if TYPE_CHECKING:
 class OnlineTrackingThread(QThread):
     tracking_data = Signal(np.ndarray)
     
-    def __init__(self, tracker: 'BaseTracker', parent=None):
+    def __init__(self, tracker: Union['BaseTracker', dict], parent=None):
 
         super().__init__(parent=parent)
-        self.tracker = tracker
+        if isinstance(tracker, dict):
+            from mwcore.registry import TRACKERS
+            tracker = TRACKERS.build(tracker)
+        self.tracker: 'BaseTracker' = tracker
 
     @Slot(object)
     def process_frame(self, det_obj):

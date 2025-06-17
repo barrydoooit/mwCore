@@ -3,7 +3,7 @@ import numpy as np
 import sys
 import pyqtgraph.opengl as gl
 import os
-from PySide2 import QtCore
+from PySide6 import QtCore
 
 
 

@@ -5,9 +5,9 @@ from typing import Type
 import debugpy
 from mmengine.config import Config, DictAction
 
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from apps.__base__.runner import MWAppRunner, APPS
+from mwcore.apps.base import BaseMWApp
+from mwcore.registry import APPS
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="mmwave breakout application")
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     app_type = cfg.get("type")
     if app_type is None:
         raise ValueError("Application type is not specified in the configuration file")
-    app_class: Type['MWAppRunner']= APPS.get(app_type)
+    app_class: Type['BaseMWApp']= APPS.get(app_type)
     app = app_class.from_cfg(cfg)
     
     app.start()

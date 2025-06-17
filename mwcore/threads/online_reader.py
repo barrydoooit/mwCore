@@ -1,24 +1,36 @@
 import numpy as np
-from mwcore.registry import THREADS
-from PySide2.QtCore import QThread, Signal
+from mwcore.radario.readers.base import SerialReader
+from mwcore.registry import READERS, THREADS
+from PySide6.QtCore import QThread, Signal
 
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Generic, TypeVar, Union
 
 if TYPE_CHECKING:
     from ..radario.readers.TI.base import BaseTIBufferedReader
 
 
 
+T = TypeVar('T', bound=SerialReader)
 @THREADS.register_module()
-class OnlineReaderThread(QThread):
+class OnlineReaderThread(QThread, Generic[T]):
     raw_data = Signal(np.ndarray)
     array_data = Signal(np.ndarray)
     
-    def __init__(self, reader: 'BaseTIBufferedReader'):
+    def __init__(self, reader: Union[T, dict], sensor_started: bool = False):
         super().__init__()
-        self.reader = reader
+        if isinstance(reader, dict):
+            reader = READERS.build(reader)
+        self._sensor_started = sensor_started
+        self.reader: T = reader
+
+    @property
+    def sensor_started(self) -> bool: return self._sensor_started
 
     def run(self):
+        if not self.sensor_started:
+            self.reader.connect()
+            self._sensor_started = True
+
         while not self.isInterruptionRequested():
             data_ok, frame_number, det_obj = self.reader.read()
             if data_ok:
