@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 T = TypeVar('T', bound=SerialReader)
 @THREADS.register_module()
 class OnlineReaderThread(QThread, Generic[T]):
-    raw_data = Signal(np.ndarray)
+    raw_data = Signal(dict)
     array_data = Signal(np.ndarray)
     
     def __init__(self, reader: Union[T, dict], sensor_started: bool = False):
