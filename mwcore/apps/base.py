@@ -2,6 +2,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 import sys
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
 
 from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
 
@@ -69,7 +70,7 @@ class BaseMWOnlineApp(BaseMWApp):
     def start(self):
         self.app = QApplication(sys.argv)
         self.reader_thread.array_data.connect(
-            self.visualizer.update_point_cloud
+            self.visualizer.on_new_cloud, Qt.QueuedConnection
         )
         self.reader_thread.start()
         self.visualizer.show()

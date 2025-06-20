@@ -4,6 +4,7 @@ from typing import List, Literal, Optional, Union
 import numpy as np
 # from PySide6.QtCore import QThread, QObject, Signal, QTimer
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
+from PySide6.QtCore import Slot, Qt, QTimer, QElapsedTimer
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 from ..plot_3d import Plot3D  # Reuse the Plot3D class from plot_3d.py
@@ -27,6 +28,21 @@ class OnlinePointCloudVisualizer(QMainWindow):
         self.setCentralWidget(self.plot3d.plot_3d)
         
         self._on_close = on_close
+
+    @Slot(np.ndarray)
+    def on_new_cloud(self, points: np.ndarray):
+        # Store the newest data, toss whatever was there before.
+        self._pending_cloud = points.copy()
+        # If no update is scheduled, schedule one ASAP.
+        if not getattr(self, "_update_scheduled", False):
+            self._update_scheduled = True
+            QTimer.singleShot(0, self._flush_pending_cloud)
+
+    def _flush_pending_cloud(self):
+        # Called in the GUI thread. Grab & clear the buffer.
+        pts = self._pending_cloud
+        self._update_scheduled = False
+        self.update_point_cloud(pts)
 
     def update_point_cloud(
         self, 
