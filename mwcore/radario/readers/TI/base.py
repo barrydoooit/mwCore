@@ -131,10 +131,14 @@ class BaseTIBufferedReader(SerialReader):
     
     def connect(self):
         loaded_config = [line.rstrip('\r\n') for line in open(self.config_file_path)]
-        filtered_config = [(line if line.endswith('\n') else line + '\n') for line in loaded_config if line != '\n' and not line.startswith('%')]
+        keep = [l for l in loaded_config if l and not l.lstrip().startswith('%')]
+        filtered_config = [(l if l.endswith('\n') else l + '\n') for l in keep]
+
+        # filtered_config = [(line if line.endswith('\n') else line + '\n') for line in loaded_config if line != '\n' and not line.startswith('%')]
         
         for line in filtered_config:
             self.CLI_port.write(line.encode())
+            # print(f"Sending command: {line.strip()}")
             time.sleep(0.03)
         self.CLI_port.reset_input_buffer()
         log.info("Chirp configurations sent to radar.")

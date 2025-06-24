@@ -1,7 +1,7 @@
 import os
 
 from .online_pointcloud import OnlinePointCloudVisualizer
-os.environ["QT_QPA_PLATFORM"] = "xcb"
+# os.environ["QT_QPA_PLATFORM"] = "xcb"
 from typing import List, Literal, Optional, Union
 import numpy as np
 # from PySide6.QtCore import QThread, QObject, Signal, QTimer

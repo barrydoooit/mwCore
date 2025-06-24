@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
@@ -28,9 +28,9 @@ class BaseMWApp:
 class BaseMWOnlineApp(BaseMWApp):
     def __init__(self,
                  reader_cfg: dict,
-                 vis_cfg: dict = dict()):
+                 vis_cfg: Optional[dict] = None):
         self.reader_cfg = deepcopy(reader_cfg)
-        self.vis_cfg = deepcopy(vis_cfg)
+        self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else None
 
     @property
     def reader_thread(self) -> 'OnlineReaderThread':
@@ -69,16 +69,17 @@ class BaseMWOnlineApp(BaseMWApp):
     
     def start(self):
         self.app = QApplication(sys.argv)
-        self.reader_thread.array_data.connect(
-            self.visualizer.on_new_cloud, Qt.QueuedConnection
-        )
+        if self.vis_cfg is not None:
+            self.reader_thread.array_data.connect(
+                self.visualizer.on_new_cloud, Qt.QueuedConnection
+            )
+            self.visualizer.show()
         self.reader_thread.start()
-        self.visualizer.show()
         sys.exit(self.app.exec())
     
     @classmethod
     def from_cfg(cls, cfg):
-        vis_cfg = cfg.get("vis_cfg", dict(type="OnlinePointCloudVisualizer"))
+        vis_cfg = cfg.get("vis_cfg", None)
         return cls(
             reader_cfg=cfg.get("reader_cfg", dict(type="BufferedPcdReaderIWR6843")),
             vis_cfg=vis_cfg
