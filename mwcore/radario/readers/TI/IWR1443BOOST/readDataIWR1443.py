@@ -6,7 +6,6 @@ import logging
 import serial
 
 log = logging.getLogger(__name__)
-logging.basicConfig(level=logging.WARNING)
 
 from datetime import datetime, timezone
 from mwcore.registry import READERS

@@ -1,3 +1,5 @@
+from contextlib import suppress
+import sys
 import time
 import logging
 from typing import Literal, Optional, Tuple, Union
@@ -7,7 +9,6 @@ import serial
 from ..base import SerialReader
 
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
 
 
 
@@ -39,7 +40,7 @@ class BaseTIBufferedReader(SerialReader):
                  max_buffer_size: int):
         assert isinstance(CLI_port, str) or isinstance(CLI_port, serial.Serial), "CLI_port must be either a string or a serial.Serial object"
         assert isinstance(Data_port, str) or isinstance(Data_port, serial.Serial), "Data_port must be either a string or a serial.Serial object"
-        self.CLI_port = serial.Serial(CLI_port, self.CLI_BAUDRATE) if isinstance(CLI_port, str) else CLI_port
+        self.CLI_port = serial.Serial(CLI_port, self.CLI_BAUDRATE, timeout=0.6) if isinstance(CLI_port, str) else CLI_port
         self.Data_port = serial.Serial(Data_port, self.DATA_BAUDRATE) if isinstance(Data_port, str) else Data_port
         self.config_file_path = config_file_path
 
@@ -129,7 +130,7 @@ class BaseTIBufferedReader(SerialReader):
         self.byte_buffer_volume = 0
         self._read_ptr = 0
     
-    def connect(self):
+    def __connect__deprecated__(self):
         loaded_config = [line.rstrip('\r\n') for line in open(self.config_file_path)]
         keep = [l for l in loaded_config if l and not l.lstrip().startswith('%')]
         filtered_config = [(l if l.endswith('\n') else l + '\n') for l in keep]
@@ -141,7 +142,7 @@ class BaseTIBufferedReader(SerialReader):
             # print(f"Sending command: {line.strip()}")
             time.sleep(0.03)
         self.CLI_port.reset_input_buffer()
-        log.info("Chirp configurations sent to radar.")
+        log.debug("Chirp configurations sent to radar.")
 
     def read(self):
         raise NotImplementedError("This method should be implemented in a subclass")
@@ -149,12 +150,69 @@ class BaseTIBufferedReader(SerialReader):
     def close(self, close_command: Optional[str] = "sensorStop\n"):
         try:
             if close_command:
-                log.info(f"Sending close command . . .")
+                log.debug(f"Sending close command . . .")
                 self.CLI_port.write(close_command.encode())
-            log.info("Closing CLI port . . .")
+            log.debug("Closing CLI port . . .")
             self.CLI_port.close()
-            log.info("Closing Data port . . .")
+            log.debug("Closing Data port . . .")
             self.Data_port.close()
-            log.info("Ports closed successfully")
+            log.debug("Ports closed successfully")
         except Exception as e:
             log.error(f"Error while closing reader: \n {e.with_traceback()}")
+
+    def connect(self):
+        cfg = self.loadCfg(self.config_file_path)
+        self.sendCfg(cfg)
+
+    def sendCfg(self, cfg):
+        # Remove empty lines from the cfg
+        cfg = [line for line in cfg if line != '\n']
+        # Ensure \n at end of each line
+        cfg = [line + '\n' if not line.endswith('\n') else line for line in cfg]
+        # Remove commented lines
+        cfg = [line for line in cfg if line[0] != '%']
+
+        for line in cfg:
+            time.sleep(.03) # Line delay
+
+            if(self.CLI_port.baudrate == 1250000):
+                for char in [*line]:
+                    time.sleep(.001) # Character delay. Required for demos which are 1250000 baud by default else characters are skipped
+                    self.CLI_port.write(char.encode())
+            else:
+                self.CLI_port.write(line.encode())
+                # print(line)
+                
+            ack = self.CLI_port.readline()
+            if(len(ack) == 0): # Check if the device is in flashing mode
+                log.error("ERROR: No data detected on COM Port, read timed out")
+                log.error("\tBe sure that the device is in the proper SOP mode after flashing with the correct binary, and that the cfg you are sending is valid")
+                self.comError = 1
+                return
+            
+            # print(ack, flush=True)
+
+            ack = self.CLI_port.readline()
+            # print(ack, flush=True)
+
+            # if (self.isLowPowerDevice):
+            #     ack = self.CLI_port.readline()
+            #     print(ack, flush=True)
+            #     ack = self.CLI_port.readline()
+            #     print(ack, flush=True)
+
+            splitLine = line.split()
+            if(splitLine[0] == "baudRate"): # The baudrate CLI line changes the CLI baud rate on the next cfg line to enable greater data streaming off the xWRL device.
+                try:
+                    self.CLI_port.baudrate = int(splitLine[1])
+                except:
+                    log.error("Error - Invalid baud rate")
+                    sys.exit(1)
+        # Give a short amount of time for the buffer to clear
+        time.sleep(0.03)
+        self.CLI_port.reset_input_buffer()
+    
+    def loadCfg(self, fname):
+        with open(fname, "r") as cfg_file:
+            cfg = cfg_file.readlines()
+        return cfg

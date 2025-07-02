@@ -1,13 +1,11 @@
 import os
-# os.environ["QT_QPA_PLATFORM"] = "xcb"
 from typing import List, Literal, Optional, Union
 import numpy as np
-# from PySide6.QtCore import QThread, QObject, Signal, QTimer
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
+from PySide6.QtWidgets import QMainWindow, QHBoxLayout, QLabel, QWidget, QVBoxLayout
 from PySide6.QtCore import Slot, Qt, QTimer, QElapsedTimer
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from ..plot_3d import Plot3D  # Reuse the Plot3D class from plot_3d.py
+from ..plot_3d import Plot3D 
 from mwcore.registry import VISUALIZERS
 
 
@@ -25,7 +23,30 @@ class OnlinePointCloudVisualizer(QMainWindow):
 
         # Instantiate the Plot3D widget from the existing infrastructure
         self.plot3d = Plot3D()
-        self.setCentralWidget(self.plot3d.plot_3d)
+        container = QWidget()
+        main_layout = QVBoxLayout(container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Top bar stretches label to the right
+        top_bar = QWidget()
+        top_bar.setFixedHeight(24)
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(5, 5, 5, 0)
+        top_layout.addStretch()
+
+        # Info label with white background
+        self.info_label = QLabel("")
+        self.info_label.setStyleSheet(
+            "background-color: white; padding: 2px; border: 1px solid #ccc;"
+        )
+        top_layout.addWidget(self.info_label)
+
+        # Assemble: top bar + GL widget
+        main_layout.addWidget(top_bar)
+        main_layout.addWidget(self.plot3d.plot_3d)
+
+        self.setCentralWidget(container)
         
         self._on_close = on_close
 
@@ -60,6 +81,10 @@ class OnlinePointCloudVisualizer(QMainWindow):
             pts = transformed_hom[:, :3]
         self.plot3d.scatter.setData(pos=pts)
 
+    @Slot(str)
+    def update_label(self, text: str):
+        self.info_label.setText(text)
+    
     def closeEvent(self, event):
         if self._on_close:
             self._on_close(event)

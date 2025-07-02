@@ -172,5 +172,5 @@ def tlv2parser(tlv_type: int) -> Callable:
         # log.error(f"{tlv_type} is not a valid TLV type")
         return None
     except KeyError:
-        log.info(f"TLV type {tlv_type} not found in TLV2PARSER")
+        # log.info(f"TLV type {tlv_type} not found in TLV2PARSER")
         return None

@@ -86,7 +86,7 @@ class BufferedPcdReaderIWR6843(BaseTIBufferedReader):
                 "x": output_dict['pointCloud'][:, 0],
                 "y": output_dict['pointCloud'][:, 1],
                 "z": output_dict['pointCloud'][:, 2],
-                # "timestamp": ntp_stamp
+                "timestamp": time.time() * 1000
             }
             # print(f"x, y, z: {det_obj['x'][0]}, {det_obj['y'][0]}, {det_obj['z'][0]}, {det_obj['doppler'][0]}, {det_obj['peakVal'][0]}")
         return data_ok, frame_number, det_obj

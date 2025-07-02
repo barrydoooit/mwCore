@@ -71,7 +71,7 @@ class BaseMWOnlineApp(BaseMWApp):
         self.app = QApplication(sys.argv)
         if self.vis_cfg is not None:
             self.reader_thread.array_data.connect(
-                self.visualizer.on_new_cloud, Qt.QueuedConnection
+                self.visualizer.on_new_cloud, Qt.ConnectionType.QueuedConnection
             )
             self.visualizer.show()
         self.reader_thread.start()
