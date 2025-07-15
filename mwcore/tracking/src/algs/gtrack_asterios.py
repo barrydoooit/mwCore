@@ -539,7 +539,9 @@ class TrackBuffer(Tracker):
             else:
                 track.update_lifetime(dt=self.dt, reset=True)
                 track.associate_pointcloud(np.array(clouds[j]))
-        for inner_cluster in new_inner_clusters:
+
+                # new_inner_clusters.append(track.seek_inner_clusters())
+        for inner_cluster in new_inner_clusters: # TODO: new_inner_clusters never gets filled
             self._add_tracks(inner_cluster)
         return unassigned
 
@@ -580,57 +582,3 @@ class TrackBuffer(Tracker):
             if new_clusters:
                 batch.buffer.clear()
             self._add_tracks(new_clusters)
-
-    # def estimate_posture(self, model: Any) -> None:
-    #     """
-    #     Format the pointcloud, estimate and save the posture of the target of each track using a CNN model.
-
-    #     Parameters
-    #     ----------
-    #     model : Model
-    #         The CNN model used for posture estimation.
-
-    #     Returns
-    #     -------
-    #     None
-    #     """
-    #     frame_matrices = []
-    #     indexes = []
-    #     for index, track in enumerate(self.effective_tracks):
-    #         if len(np.concatenate(list(track.batch.buffer), axis=0)) > self.config.MODEL_MIN_INPUT:
-    #             rel_track_points = relative_coordinates(list(track.batch.buffer), track.cluster.centroid[:2])
-    #             frame_matrices.append(format_single_frame(rel_track_points))
-    #             indexes.append(index)
-    #     frame_matrices_array = np.array(frame_matrices)
-    #     if frame_matrices_array.size > 0:
-    #         frame_keypoints = model.predict(frame_matrices_array)
-    #         for i, idx in enumerate(indexes):
-    #             self.effective_tracks[idx].keypoints = frame_keypoints[i]
-
-    # def update_real_posture(self, real_data: np.array) -> List[tuple]:
-    #     """
-    #     Update the real posture of the target of each track using the real data.
-
-    #     Parameters
-    #     ----------
-    #     real_data : np.array
-    #         Real data for posture estimation.
-
-    #     Returns
-    #     -------
-    #     An array of tuples containing the centroid and joint 0 of each track. They will be reformatted to (x, y, z) as the coordinate system is like that.
-    #     """
-    #     centralValues = []
-    #     for index, track in enumerate(self.effective_tracks):
-    #         try:
-    #             kinect_coords = real_data[index]
-    #         except Exception:
-    #             print("Warning. No more than one skeleton detected; using the same skeleton for all tracks.", time.time())
-    #             kinect_coords = real_data[0]
-    #         track.ground_truth = np.array(kinect_coords)
-    #         reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
-    #         reshaped_keypoints[0] *= -1
-    #         reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
-    #         centroid = np.mean(reshaped_keypoints, axis=1)
-    #         centralValues.append((centroid, reshaped_keypoints[:, 0]))
-    #     return centralValues

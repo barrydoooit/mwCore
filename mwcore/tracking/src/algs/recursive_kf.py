@@ -390,7 +390,7 @@ class RKFTrackBuffer(Tracker):
 
     def __init__(self, config: RKFConfig, usePalmar: bool = False) -> None:
         self.config = config
-        self.effective_tracks = []
+        self.effective_tracks: List[RKFClusterTrack] = []
         self.next_track_id = 0
         self.dt = 0
         self.t = time.time()
@@ -485,40 +485,6 @@ class RKFTrackBuffer(Tracker):
                 batch.clear()
             self._add_tracks(new_clusters)
 
-    # def estimate_posture(self, model: Any) -> None:
-    #     frame_matrices = []
-    #     indexes = []
-    #     for idx, track in enumerate(self.effective_tracks):
-    #         batch_data = np.concatenate(list(track.batch.buffer), axis=0) if hasattr(track.batch, 'buffer') else track.batch.effective_data
-    #         if batch_data.size > self.config.MODEL_MIN_INPUT:
-    #             state_cartesian = polar_to_cartesian(track.state.x.flatten())
-    #             rel_track_points = []  # use relative_coordinates if needed
-    #             frame_matrices.append(rel_track_points)  # Replace with proper formatting
-    #             indexes.append(idx)
-    #     frame_matrices_array = np.array(frame_matrices)
-    #     if frame_matrices_array.size > 0:
-    #         frame_keypoints = model.predict(frame_matrices_array)
-    #         for i, idx in enumerate(indexes):
-    #             self.effective_tracks[idx].keypoints = frame_keypoints[i]
-
-    # def update_real_posture(self, real_data: np.array) -> List[tuple]:
-    #     centralValues = []
-    #     for idx, track in enumerate(self.effective_tracks):
-    #         try:
-    #             kinect_coords = real_data[idx]
-    #         except Exception:
-    #             print("Warning. No more than one skeleton detected; using same skeleton for all tracks.", time.time())
-    #             kinect_coords = real_data[0]
-    #         track.ground_truth = np.array(kinect_coords)
-    #         reshaped_keypoints = track.ground_truth.copy().reshape(3, -1)
-    #         reshaped_keypoints[0] *= -1
-    #         reshaped_keypoints = reshaped_keypoints[[0, 2, 1]]
-    #         centroid = np.mean(reshaped_keypoints, axis=1)
-    #         centralValues.append((centroid, reshaped_keypoints[:, 0]))
-    #     return centralValues
-
-    
-    
 def transform_measurement(measurement):
     """
     Transform a measurement from [r, θ, ṙ] to [r, ṙ, θ, θ̇].

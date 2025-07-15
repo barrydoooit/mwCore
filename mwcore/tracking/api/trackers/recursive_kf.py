@@ -1,5 +1,5 @@
 import time
-from typing import List, Optional
+from typing import List, Literal, Optional
 import numpy as np
 from mwcore.registry import TRACKERS
 from mwcore.tracking.src.algs.gtrack import BatchedData
@@ -28,7 +28,11 @@ class RKFTracker(BaseTracker):
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
-    def consume(self, det_obj: dict = None, point_array: np.ndarray = None):
+    def consume(self, 
+                det_obj: dict = None, 
+                point_array: np.ndarray = None, 
+                sort_metric: Optional[Literal['size', 'snr', 'rel']] = None, 
+                **kwargs) -> List[np.ndarray]:
         effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=self.do_dev2standard)
         now = time.time()
         dt = now - self.last_time
@@ -36,9 +40,12 @@ class RKFTracker(BaseTracker):
         self.tracker.dt = dt
         if effective_data.shape[0] > 0:
             self.tracker.track(effective_data, self.batch)
-        locations = [track.cluster.centroid for track in self.tracker.effective_tracks] # centroid might be in Polar Coordinates
+        locations = [track.cluster.centroid for track in self.tracker.effective_tracks]
         if not self.result_in_polar:
             locations = self.polar_to_cartesian(locations)
+        if sort_metric is not None:
+            sorted_indices = self.sort_results(metric=sort_metric, **kwargs)
+            locations = [locations[i] for i in sorted_indices]
         return locations
 
     def polar_to_cartesian(self, polar_coords: List[np.ndarray]) -> List[np.ndarray]:
@@ -65,6 +72,29 @@ class RKFTracker(BaseTracker):
             cartesian_coords.append(np.array([x, y, z]))
         return cartesian_coords
     
+    def sort_results(self, metric: Literal['size', 'snr', 'rel'] = 'size', **kwargs) -> np.ndarray:
+        clusters = [track.cluster for track in self.tracker.effective_tracks]
+        if metric == 'size':
+            cluster_sizes = [c.point_num for c in clusters]
+            sorted_indices = np.argsort(cluster_sizes)[::-1]
+            return sorted_indices
+        
+        if metric == 'snr':
+            snr_values = [c.pointcloud[:, 7].mean() for c in clusters]
+            sorted_indices = np.argsort(snr_values)[::-1]
+            return sorted_indices
+        
+        if metric == 'rel':
+            anchor = kwargs.get('anchor')
+            if anchor is None:
+                raise ValueError("The 'anchor' point must be provided for 'rel' sorting.")
+            is_radial_anchor = kwargs.get('is_radial_anchor', self.result_in_polar)
+            if is_radial_anchor:
+                anchor = self.polar_to_cartesian([anchor])[0]
+            rel_distances = [np.linalg.norm(self.polar_to_cartesian([c.centroid])[0] - anchor) for c in clusters]
+            sorted_indices = np.argsort(rel_distances)
+            return sorted_indices
+        
 def make_config_rkf(raw: dict) -> RKFConfig:
     def RKF_F(dt):
         return np.array([
