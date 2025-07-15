@@ -70,7 +70,6 @@ class BaseTracker(TrackingFunctionality):
 
         for index in range(len(input_data)):
             x, y, z, doppler, peakVal = input_data[index]
-
             # Compute polar coordinates
             r = math.sqrt(x**2 + y**2 + z**2)
             theta = math.atan2(y, x)  # Angle in radians
@@ -107,13 +106,8 @@ class BaseTracker(TrackingFunctionality):
             # To be used with the Recursive Kalmann Filter
             if keepRadial:
                 transformed_point = np.append(transformed_point, [r, theta, r_dot])  
-            # Perform scene constraints filtering
-            if (
-                transformed_point[2] <= 2.5
-                and transformed_point[2] > 0
-                and transformed_point[1] > 0
-            ):
-                ef_data = np.append(
+            
+            ef_data = np.append(
                     ef_data,
                     [transformed_point],
                     axis=0,
