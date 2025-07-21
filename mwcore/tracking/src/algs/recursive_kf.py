@@ -45,7 +45,13 @@ class RKFConfig:
     TR_GATE: float  # e.g. 4.5
     TR_MAX_TRACKS: int  # e.g. 4
     TR_VEL_THRES: float
-    
+
+    ENABLE_TORSO_TRACKING: bool  # New flag
+    MAX_LIMB_VELOCITY: float         # m/s
+    MIN_TORSO_MOVEMENT: float       # meters
+    TORSO_DENSITY_RADIUS: float     # meters
+    MIN_TORSO_POINTS: int 
+
 def voxelize(pointcloud, voxel_size):
     """
     Perform voxelization on the point cloud data.
@@ -143,11 +149,6 @@ class RecursiveKalmanFilter:
         I = np.eye(self.P.shape[0])
         self.P = (I - K @ self.H) @ self.P @ (I - K @ self.H).T + K @ R @ K.T
         
-    def step(self, measurement=None):
-        self.predict()
-        if measurement is not None:
-            self.update(measurement)
-        return self.x.flatten()
     
 class RKFClusterTrack:
     """
@@ -226,14 +227,27 @@ class RKFClusterTrack:
         self.group_disp_est = np.eye(4) * config.KF_GROUP_DISP_EST_INIT
         self.cluster = cluster
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH + 1, cluster.pointcloud)
-        self.state = RecursiveKalmanFilter()  # Initialized with default dt etc.
+        self.state = RecursiveKalmanFilter(R=np.eye(4) * config.KF_R_STD**2)
         self.status = ACTIVE  # ACTIVE status
         self.lifetime = 0
-        # self.keypoints = config.MODEL_DEFAULT_POSTURE
         self.predict_x = self.state.x
         self.color = np.random.rand(3)
         self.usePalmar = usePalmar
-        
+        self.useTorsoTracking = config.ENABLE_TORSO_TRACKING
+        r, theta, r_dot = cluster.centroid[-3:]  # Assume last 3 are [r, θ, r_dot]
+        self.state.x = np.array([
+            [r], 
+            [r_dot],  # Use measured Doppler
+            [theta], 
+            [0.0]     # θ_dot unknown
+        ])
+        self.hits = 1  
+        self.misses = 0  
+        self.torso_center = None  # Center of torso for tracking
+        self.last_valid_position = None  # Last valid position for torso tracking
+        self.body_state = deepcopy(self.state)  # Separate state for body tracking
+        self.limb_points = []  # Stores outlier points
+
         if usePalmar:
             self.ao_hmm = AdaptiveOrderHMM()
 
@@ -288,37 +302,47 @@ class RKFClusterTrack:
         D_projected = self.config.H @ self._get_D() @ self.config.H.T
         return (R_m / N) + (((N_est - N) / ((N_est - 1) * N)) * D_projected)
 
-    def associate_pointcloud(self, pointcloud: np.array, useBatch: bool = False) -> None:
+    def associate_pointcloud(self, pointcloud: np.array, useBatch: bool = False):
+        # First classify points
+        self.body_points, self.limb_points = self._classify_points(pointcloud)
+        
+        # print(f"Classified {len(self.body_points)} body points and {len(self.limb_points)} limb points")  # Debug line
+        # Update body state if possible
+        if len(self.body_points) >= self.config.MIN_TORSO_POINTS:
+            print(f"Updating body state with {len(self.body_points)} points")  # Debug line
+        
+        # Original processing 
         if not useBatch:
             self.cluster = PointCluster(pointcloud, polar=True)
             self.batch.add_frame(self.cluster.pointcloud)
         else:
             self.batch.add_frame(pointcloud)
             fused, weights = self.batch._compute_effective_data()
-            self.cluster = PointCluster(fused, tr_vel_threshold=self.config.TR_VEL_THRES, weights=weights, isFrame=True, polar=True)
+            self.cluster = PointCluster(fused, tr_vel_threshold=self.config.TR_VEL_THRES,
+                                    weights=weights, isFrame=True, polar=True)
+        
         self._estimate_point_num()
         self._estimate_measurement_spread()
         self._estimate_group_disp_matrix()
+
+    def predict_state(self, dt: float):
+        # Predict both states
+        self.state.F = self.config.RKF_F(dt)
+        self.state.predict()
+        
+        self.predict_x = self.state.x
 
     def get_Rm(self) -> np.ndarray:
         diagonal_elements = (self.spread_est[:2] / 2) ** 2
         return np.diag(diagonal_elements)
 
-    def predict_state(self, dt: float) -> None:
-        self.state.F = self.config.RKF_F(dt)
-        self.state.predict()
-        self.predict_x = self.state.x
 
     def update_state(self) -> None:
-        z = np.array(self.cluster.centroid)[:2]
-        self.state.update(z, R=self._get_Rc())
-        if self.usePalmar:
-            obs_index = self.observation_to_index(z)
-            refined_sequence = self.ao_hmm.refine_state([obs_index])
-            self.state.x[:2] = np.array(refined_sequence).reshape(-1,1)
-        variance = z[:1] - self.state.x[:1, 0]
-        if abs(variance.any()) > 0.6 and self.lifetime == 0:
-            self.state.x[:1, 0] += variance * 0.4
+        z = self.cluster.centroid[:2]
+        
+        # Apply the update
+        self.state.update(z, R=self.state.R)
+        
 
     def update_lifetime(self, dt: float, reset: bool = False) -> None:
         if reset:
@@ -326,6 +350,13 @@ class RKFClusterTrack:
         else:
             self.lifetime += dt
 
+    def update_status(self):
+        if self.hits >= 2: 
+            self.status = ACTIVE  # Confirmed track
+        elif self.misses > 5:
+            self.status = 0  # Mark inactive
+
+            
     def observation_to_index(self, observation: np.ndarray) -> int:
         r, theta = observation
         r_bins = [0.000, 2.141, 3.257, 4.275]
@@ -334,6 +365,25 @@ class RKFClusterTrack:
         theta_bin = np.digitize(theta, theta_bins) - 1
         obs_index = r_bin * 3 + theta_bin
         return obs_index
+
+    
+    def _classify_points(self, pointcloud: np.array) -> Tuple[np.array, np.array]:
+        """Separate body points from limb points"""
+        if len(pointcloud) == 0:
+            return np.empty((0,3)), np.empty((0,3))
+        
+        body_points = []
+        limb_points = []
+        
+        for point in pointcloud:
+            r, theta, r_dot = point[:3]
+            if abs(r_dot - self.body_state.x[1,0]) < self.config.MAX_LIMB_VELOCITY:
+                body_points.append(point)
+            else:
+                limb_points.append(point)
+                
+        return np.array(body_points), np.array(limb_points)
+
 
 class RKFTrackBuffer(Tracker):
     """
@@ -390,7 +440,7 @@ class RKFTrackBuffer(Tracker):
 
     def __init__(self, config: RKFConfig, usePalmar: bool = False) -> None:
         self.config = config
-        self.effective_tracks: List[RKFClusterTrack] = []
+        self.effective_tracks = []
         self.next_track_id = 0
         self.dt = 0
         self.t = time.time()
@@ -399,30 +449,55 @@ class RKFTrackBuffer(Tracker):
     def _maintain_tracks(self) -> None:
         for track in self.effective_tracks:
             lifetime = self.config.TR_LIFETIME_DYNAMIC if track.cluster.status != 0 else self.config.TR_LIFETIME_STATIC
-            if track.lifetime > lifetime:
+            lifetime_expired = track.lifetime > lifetime
+            
+            too_many_misses = track.misses > 4
+            
+            if lifetime_expired or too_many_misses:
                 track.status = 0  # INACTIVE
+                
         self.effective_tracks = [track for track in self.effective_tracks if track.status != 0]
+
 
     def _calc_dist_fun(self, full_set: np.array) -> np.ndarray:
         num_points = full_set.shape[0]
         num_tracks = len(self.effective_tracks)
-        dist_matrix = np.empty((num_points, num_tracks))
+        dist_matrix = np.full((num_points, num_tracks), np.inf)  # Initialize with infinity
         associated_track_for = np.full(num_points, None, dtype=object)
-        H = self.config.H  # measurement matrix
+        H = self.config.H
+
+
+        
         for j, track in enumerate(self.effective_tracks):
+            # Use predicted state for current time step
             H_i = np.dot(H, track.state.x).flatten()
-            C_g_j = H @ (track.state.P + track.group_disp_est) @ H.T + track.get_Rm()
+            
+            # Calculate the measurement covariance matrix
+            C_g_j = track.state.P + track._get_Rm() + track.group_disp_est
+            C_g_j_obs = H @ C_g_j @ H.T 
             for i, point in enumerate(full_set):
-                r, theta, _ = point[-3:]  # use last 3 polar dimensions: [r,θ,r_dot]
+                r, theta, _ = point[-3:]  # Polar coordinates
                 z = np.array([r, theta])
                 y_ij = z - H_i
-                dist_matrix[i][j] = np.log(np.abs(np.linalg.det(C_g_j))) + np.dot(np.dot(y_ij.T, np.linalg.inv(C_g_j)), y_ij)
-                if dist_matrix[i][j] < self.config.TR_GATE:
+                
+                # Mahalanobis distance
+                try:
+                    dist = (np.log(np.abs(np.linalg.det(C_g_j_obs))) +
+                            y_ij.T @ np.linalg.inv(C_g_j_obs) @ y_ij)
+                except np.linalg.LinAlgError:
+                    dist = np.inf
+                # Store distance for potential assignment
+                dist_matrix[i, j] = dist
+
+                # Vertically gate the point to the track
+
+
+                if dist < self.config.TR_GATE:
                     if associated_track_for[i] is None:
                         associated_track_for[i] = j
-                    else:
-                        if dist_matrix[i][j] < dist_matrix[i][int(associated_track_for[i])]:
-                            associated_track_for[i] = j
+                    elif dist < dist_matrix[i, associated_track_for[i]]:
+                        associated_track_for[i] = j
+                        
         return associated_track_for
 
     def _add_tracks(self, new_clusters: List[np.array]) -> None:
@@ -432,42 +507,61 @@ class RKFTrackBuffer(Tracker):
             self.effective_tracks.append(new_track)
 
     def _predict_all(self) -> None:
-        for track in self.effective_tracks:
-            track.predict_state(track.lifetime + self.dt)
+        for i, track in enumerate(self.effective_tracks):
+            # print(f"Track {i} pre-predict state: {track.state.x.flatten()}")  # Debug
+            track.predict_state(self.dt)
+            # print(f"Track {i} post-predict state: {track.state.x.flatten()}")  # Debug
 
     def _update_all(self) -> None:
-        for track in self.effective_tracks:
-            track.update_state()
+        for i, track in enumerate(self.effective_tracks):
+            if track.hits > 0:
+                # print(f"Updating track {i} with centroid {track.cluster.centroid[:2]}")  # Debug
+                track.update_state()
+
+
 
     def _get_gated_clouds(self, full_set: np.array) -> Tuple[np.ndarray, List[List[np.array]]]:
         unassigned = np.empty((0, full_set.shape[1]), dtype=float)
         clusters = [[] for _ in range(len(self.effective_tracks))]
         associated_track_for = self._calc_dist_fun(full_set)
+        
         for i, point in enumerate(full_set):
             if associated_track_for[i] is None:
                 unassigned = np.append(unassigned, [point], axis=0)
             else:
-                clusters[associated_track_for[i]].append(point)
+                track_idx = associated_track_for[i]
+                clusters[track_idx].append(point)
+                
         return unassigned, clusters
 
     def _associate_points_to_tracks(self, full_set: np.array) -> np.ndarray:
         unassigned, clouds = self._get_gated_clouds(full_set)
-        new_inner_clusters = []
+        
         for j, track in enumerate(self.effective_tracks):
-            if len(clouds[j]) == 0:
+            if len(clouds[j]) < 1:
+                # Update miss counter and lifetime
+                track.misses += 1
                 track.update_lifetime(dt=self.dt)
             else:
+                # Reset miss counter and lifetime
+                track.misses = 0
                 track.update_lifetime(dt=self.dt, reset=True)
                 track.associate_pointcloud(np.array(clouds[j]), useBatch=True)
-        for inner_cluster in new_inner_clusters:
-            self._add_tracks(inner_cluster)
+                
         return unassigned
+    
+
 
     def track(self, pointcloud: np.array, batch: BatchedData, clusteringAlgorithm: str = "DBSCAN") -> None:
         if clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]:
             raise ValueError("Invalid clustering algorithm. Please use 'DBSCAN', 'BIRCH', or 'both'.")
+        pointcloud = self.remove_outliers(pointcloud)
         self._predict_all()
         unassigned = self._associate_points_to_tracks(pointcloud)
+
+        # print(f"Unassigned points after association: {len(unassigned)}")
+        # print(f"Active tracks: {len([t for t in self.effective_tracks if t.status != 0])}")
+    
         self._maintain_tracks()
         self._update_all()
         new_clusters = []
@@ -479,12 +573,82 @@ class RKFTrackBuffer(Tracker):
                                                 db_range_weight=self.config.DB_RANGE_WEIGHT,
                                                 db_z_weight=self.config.DB_Z_WEIGHT),
                                             eps=self.config.DB_EPS,
-                                            min_samples=self.config.DB_MIN_SAMPLES_MIN,
+                                            min_samples=self.config.DB_MIN_SAMPLES_MIN
                                             )
             if new_clusters:
                 batch.clear()
+            # print(f"Creating {len(new_clusters)} new tracks")  # Debug line
             self._add_tracks(new_clusters)
+    
+    def remove_outliers(self, pointcloud: np.array, 
+                   min_range: float = 0.3, 
+                   max_range: float = 50.0,
+                   z_threshold: float = 2.0,
+                   use_statistical: bool = False) -> np.array:
+        """
+        Remove outliers from point cloud using multi-stage filtering
+        
+        Parameters
+        ----------
+        pointcloud : np.array
+            Input point cloud with structure [x, y, z, ..., r, azimuth, ...]
+        min_range : float, optional
+            Minimum valid radial distance (meters). Default 0.3m
+        max_range : float, optional
+            Maximum valid radial distance (meters). Default 50.0m
+        z_threshold : float, optional
+            Maximum valid z-height (meters). Default 2.0m
+        use_statistical : bool, optional
+            Enable statistical outlier removal. Default True
+        
+        Returns
+        -------
+        np.array
+            Filtered point cloud
+        """
+        if pointcloud.size == 0:
+            return pointcloud
+        
+        # Remember that each point in the pointcloud is structured as:
+        # [x, y, z, x_vel, y_vel, z_vel, doppler, peakVal, r, theta, r_dot]
 
+        # 1. Range-based filtering using radial distance
+        radial_dists = pointcloud[:, -3]  # Radial distance is stored at index -3
+        range_mask = (radial_dists >= min_range) & (radial_dists <= max_range)
+        
+        # 2. Height filtering (remove flying objects/unrealistic heights)
+        z_vals = pointcloud[:, 2]  # Z-coordinate at index 2
+        height_mask = np.abs(z_vals) <= z_threshold
+        
+        # 3. Statistical Outlier Removal (optional)
+        if use_statistical and np.sum(range_mask & height_mask) > 1:
+            filtered = pointcloud[range_mask & height_mask]
+            
+            # Calculate mean distance to K-nearest neighbors
+            k = min(10, len(filtered) - 1)  # Ensure k < num_points
+            nn_distances = np.sort(np.linalg.norm(filtered[:, None, :3] - filtered[None, :, :3], axis=-1))[:, 1:k+1]  # Exclude self-distance
+            
+            mean_dists = np.mean(nn_distances, axis=1)
+            dist_threshold = np.percentile(mean_dists, 90)  
+            statistical_mask = mean_dists <= dist_threshold
+            
+            final = filtered[statistical_mask]
+        else:
+            final = pointcloud[range_mask & height_mask]
+        
+        # 4. Velocity filtering 
+        if pointcloud.shape[1] > 7:  # Check if velocity data exists
+            velocities = final[:, -1]
+            velocity_mask = np.abs(velocities) <= 25.0  # 25 m/s = 90 km/h
+            final = final[velocity_mask]
+        
+        # removed = len(pointcloud) - len(final)
+        # if removed > 0:
+        #     print(f"Removed {removed} outliers "
+        #         f"(range: [{min_range},{max_range}]m, "
+        #         f"height: ±{z_threshold}m)")
+        
+        return final
 def transform_measurement(measurement):
     """
     Transform a measurement from [r, θ, ṙ] to [r, ṙ, θ, θ̇].

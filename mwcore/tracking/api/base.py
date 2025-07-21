@@ -20,7 +20,7 @@ class BaseTracker(TrackingFunctionality):
                        det_obj: Optional[dict] = None, 
                        point_array: Optional[np.ndarray] = None, 
                        keepRadial: bool = False, 
-                       transform: bool = True):
+                       transform: bool = False):
         """
         Preprocesses the point cloud data from the sensor.
 

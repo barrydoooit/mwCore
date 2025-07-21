@@ -7,23 +7,21 @@ from filterpy.common import Q_discrete_white_noise
 from mwcore.registry import TRACKERS
 
 from mwcore.tracking.src.algs.gtrack import BatchedData
-from mwcore.tracking.src.algs.gtrack_asterios import AsteriosConfig, ConstAccModel
+from mwcore.tracking.src.algs.gtrack_kaloyan import KaloyanConfig, ConstAccModel as KaloyanConstAccModel
 from ..base import BaseTracker
 
-from mwcore.tracking.src.algs.gtrack_asterios import TrackBuffer as AsteriosTrackBuffer
-
-
+from mwcore.tracking.src.algs.gtrack_kaloyan import TrackBuffer as KaloyanTrackBuffer
 
 @TRACKERS.register_module()
-class GTrackATracker(BaseTracker):
+class GTrackKTracker(BaseTracker):
     def __init__(self, 
                  keep_radial: bool,
-                 tracker_params: dict,
-                 radar_cfg: Optional[dict] = None):
+                 tracker_config: dict,
+                 radar_cfg: dict):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
-        self.config = make_config_asterios(tracker_params)
-        self.tracker = AsteriosTrackBuffer(self.config)
+        self.config = make_config_kaloyan(tracker_config)
+        self.tracker = KaloyanTrackBuffer(self.config)
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
@@ -64,9 +62,9 @@ class GTrackATracker(BaseTracker):
             rel_distances = [np.linalg.norm(c.centroid[:3] - anchor) for c in clusters]
             sorted_indices = np.argsort(rel_distances)
             return sorted_indices
+    
 
-        
-def make_config_asterios(raw: dict) -> AsteriosConfig:
+def make_config_kaloyan(raw: dict) -> KaloyanConfig:
     def KF_F(dt):
         return np.array([
             [1, 0, 0, dt, 0, 0, (0.5 * dt**2), 0, 0],
@@ -79,48 +77,54 @@ def make_config_asterios(raw: dict) -> AsteriosConfig:
             [0, 0, 0, 0, 0, 0, 0, 1, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 1],
         ])
-    
+
     def KF_Q_DISCR(dt):
         return block_diag(
             Q_discrete_white_noise(3, dt, var=raw['KF_Q_STD']),
             Q_discrete_white_noise(3, dt, var=raw['KF_Q_STD']),
             Q_discrete_white_noise(3, dt, var=raw['KF_Q_STD']),
         )
-    
+
     def STATE_VEC(init):
-        return [*init[:6], 0, 0, 0]
-    
-    motion_model = ConstAccModel(
+        # Use zeros for last 3 if not present
+        return [init[0], init[1], init[2], init[3], init[4], init[5], 0, 0, 0]
+
+    motion_model = KaloyanConstAccModel(
         KF_DIM=[9, 6],
         KF_H=np.eye(6, 9),
         KF_F=KF_F,
         KF_Q_DISCR=KF_Q_DISCR,
         STATE_VEC=STATE_VEC,
     )
-    
-    return AsteriosConfig(
+
+    return KaloyanConfig(
         motion_model=motion_model,
         FB_FRAMES_BATCH=raw["FB_FRAMES_BATCH"],
-        FB_FRAMES_BATCH_STATIC=raw.get("FB_FRAMES_BATCH_STATIC"),
-        DB_POINTS_THRES=raw.get("DB_POINTS_THRES"),
-        DB_SPREAD_THRES=raw.get("DB_SPREAD_THRES"),
-        DB_EPS=raw.get("DB_EPS"),
-        DB_RANGE_WEIGHT=raw.get("DB_RANGE_WEIGHT"),
-        DB_Z_WEIGHT=raw.get("DB_Z_WEIGHT"),
-        DB_MIN_SAMPLES_MIN=raw.get("DB_MIN_SAMPLES_MIN"),
-        KF_R_STD=raw.get("KF_R_STD"),
-        KF_P_INIT=raw.get("KF_P_INIT"),
-        KF_GROUP_DISP_EST_INIT=raw.get("KF_GROUP_DISP_EST_INIT"),
-        KF_ENABLE_EST=raw.get("KF_ENABLE_EST"),
-        KF_A_N=raw.get("KF_A_N"),
-        KF_EST_POINTNUM=raw.get("KF_EST_POINTNUM"),
-        KF_SPREAD_LIM=raw.get("KF_SPREAD_LIM"),
-        KF_A_SPR=raw.get("KF_A_SPR"),
-        # MODEL_MIN_INPUT=raw.get("MODEL_MIN_INPUT"),
-        # MODEL_DEFAULT_POSTURE=np.zeros(57),
-        TR_LIFETIME_DYNAMIC=raw.get("TR_LIFETIME_DYNAMIC"),
-        TR_LIFETIME_STATIC=raw.get("TR_LIFETIME_STATIC"),
-        TR_GATE=raw.get("TR_GATE"),
-        TR_MAX_TRACKS=raw.get("TR_MAX_TRACKS"),
-        TR_VEL_THRES=raw.get("TR_VEL_THRES"),
+        FB_FRAMES_BATCH_STATIC=raw.get("FB_FRAMES_BATCH_STATIC", 1),
+        DB_POINTS_THRES=raw.get("DB_POINTS_THRES", 40),
+        DB_SPREAD_THRES=raw.get("DB_SPREAD_THRES", 0.7),
+        DB_EPS=raw.get("DB_EPS", 0.3),
+        DB_RANGE_WEIGHT=raw.get("DB_RANGE_WEIGHT", 0.03),
+        DB_Z_WEIGHT=raw.get("DB_Z_WEIGHT", 0.4),
+        DB_MIN_SAMPLES_MIN=raw.get("DB_MIN_SAMPLES_MIN", 40),
+        KF_R_STD=raw.get("KF_R_STD", 0.1),
+        KF_Q_STD=raw.get("KF_Q_STD", 0.1),
+        KF_P_INIT=raw.get("KF_P_INIT", 0.1),
+        KF_GROUP_DISP_EST_INIT=raw.get("KF_GROUP_DISP_EST_INIT", 0.1),
+        KF_ENABLE_EST=raw.get("KF_ENABLE_EST", False),
+        KF_A_N=raw.get("KF_A_N", 0.9),
+        KF_EST_POINTNUM=raw.get("KF_EST_POINTNUM", 30),
+        KF_SPREAD_LIM=raw.get("KF_SPREAD_LIM", [0.2, 0.2, 2, 1.2, 1.2, 0.2]),
+        KF_A_SPR=raw.get("KF_A_SPR", 0.9),
+        TR_LIFETIME_DYNAMIC=raw.get("TR_LIFETIME_DYNAMIC", 3),
+        TR_LIFETIME_STATIC=raw.get("TR_LIFETIME_STATIC", 7),
+        TR_GATE=raw.get("TR_GATE", 10.5),
+        TR_MAX_TRACKS=raw.get("TR_MAX_TRACKS", 2),
+        TR_VEL_THRES=raw.get("TR_VEL_THRES", 0.12),
+        NUM_DYNAMIC_POINTS_THRESHOLD=raw.get("NUM_DYNAMIC_POINTS_THRESHOLD", 3),
+        DOPPLER_THRESHOLD=raw.get("DOPPLER_THRESHOLD", 0),
+        MIN_VELOCITY_STOP_NO_POINTS=raw.get("MIN_VELOCITY_STOP_NO_POINTS", 0.04),
+        MIN_VELOCITY_STOP_NO_DYNAMIC_POINTS=raw.get("MIN_VELOCITY_STOP_NO_DYNAMIC_POINTS", 0.04),
+        MIN_VELOCITY_SLOW_DOWN=raw.get("MIN_VELOCITY_SLOW_DOWN", 1),
     )
+    

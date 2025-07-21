@@ -9,3 +9,6 @@ log**
 
 errors/
 *.egg-info
+/build
+/data
+/src/tracking/gtrack

@@ -84,3 +84,80 @@ class BaseMWOnlineApp(BaseMWApp):
             reader_cfg=cfg.get("reader_cfg", dict(type="BufferedPcdReaderIWR6843")),
             vis_cfg=vis_cfg
         )
+    
+@APPS.register_module()
+class BaseMWOfflineApp(BaseMWApp):
+    def __init__(self,
+                 reader_cfg: dict,
+                 tracker_cfg: dict,
+                 vis_cfg: Optional[dict] = None):
+        self.reader_cfg = deepcopy(reader_cfg)
+        self.tracker_cfg = deepcopy(tracker_cfg)
+        self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else None
+
+    @property
+    def reader_thread(self):
+        if not hasattr(self, '_reader_thread'):
+            self._reader_thread = THREADS.build(dict(
+                type="OfflineReaderThread",
+                reader=self.reader_cfg,
+                playback_speed=self.reader_cfg.get("playback_speed", 0.4),
+            ))
+        return self._reader_thread
+
+    @property
+    def tracker_thread(self):
+        if not hasattr(self, '_tracker_thread'):
+            self._tracker_thread = THREADS.build(dict(
+                type="OnlineTrackingThread",
+                tracker=self.tracker_cfg
+            ))
+        return self._tracker_thread
+
+    @property
+    def error_thread(self):
+        if not hasattr(self, '_error_thread'):
+            self._error_thread = THREADS.build(dict(
+                type="ErrorMeasurementThread",
+                tracker_name=self.tracker_cfg.get("type", "default_experiment"),
+                dataset_name=self.reader_cfg.get("type", "default_dataset") +
+                             self.reader_cfg.get("data", "default_dataset").replace("data", "").replace("/", "_").replace("?", ""),
+                save_stats=self.reader_cfg.get("save_stats", True),
+                polar=self.tracker_cfg.get("keep_radial", False),
+            ))
+        return self._error_thread
+
+    @property
+    def visualizer(self):
+        if not hasattr(self, '_visualizer'):
+            def _on_close(event):
+                self.reader_thread.requestInterruption()
+                self.tracker_thread.requestInterruption()
+                self.error_thread.requestInterruption()
+            self._visualizer = VISUALIZERS.build(dict(
+                self.vis_cfg,
+                on_close=_on_close
+            ))
+        return self._visualizer
+
+    def start(self):
+        self.app = QApplication(sys.argv)
+        # Connect signals
+        self.reader_thread.raw_data.connect(self.tracker_thread.process_frame)
+        self.reader_thread.ground_truth_data.connect(self.error_thread.update_ground_truth)
+        self.tracker_thread.tracking_data.connect(self.error_thread.update_tracking)
+        self.tracker_thread.tracking_data.connect(self.visualizer.update_tracking)
+        self.error_thread.error_data.connect(self.visualizer.update_error_metrics)
+        self.visualizer.show()
+        self.error_thread.start()
+        self.reader_thread.start()
+        self.tracker_thread.start()
+        sys.exit(self.app.exec())
+
+    @classmethod
+    def from_cfg(cls, cfg):
+        return cls(
+            reader_cfg=cfg.get("reader_cfg", {}),
+            tracker_cfg=cfg.get("tracker_cfg", {}),
+            vis_cfg=cfg.get("vis_cfg", None)
+        )
