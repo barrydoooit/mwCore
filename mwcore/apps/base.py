@@ -4,7 +4,10 @@ import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
+from mwcore.threads.error_measurement import ErrorMeasurementThread
+from mwcore.threads.online_tracking import OnlineTrackingThread
 from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
+from mwcore.visualization.visualizers.online_tracking import OnlineTrackingVisualizer
 
 if TYPE_CHECKING:
     from mwcore.radario.readers.TI.base import BaseTIBufferedReader
@@ -93,10 +96,10 @@ class BaseMWOfflineApp(BaseMWApp):
                  vis_cfg: Optional[dict] = None):
         self.reader_cfg = deepcopy(reader_cfg)
         self.tracker_cfg = deepcopy(tracker_cfg)
-        self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else None
+        self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else {}
 
     @property
-    def reader_thread(self):
+    def reader_thread(self) -> 'OnlineReaderThread':
         if not hasattr(self, '_reader_thread'):
             self._reader_thread = THREADS.build(dict(
                 type="OfflineReaderThread",
@@ -106,7 +109,7 @@ class BaseMWOfflineApp(BaseMWApp):
         return self._reader_thread
 
     @property
-    def tracker_thread(self):
+    def tracker_thread(self) -> 'OnlineTrackingThread':
         if not hasattr(self, '_tracker_thread'):
             self._tracker_thread = THREADS.build(dict(
                 type="OnlineTrackingThread",
@@ -115,7 +118,7 @@ class BaseMWOfflineApp(BaseMWApp):
         return self._tracker_thread
 
     @property
-    def error_thread(self):
+    def error_thread(self) -> 'ErrorMeasurementThread':
         if not hasattr(self, '_error_thread'):
             self._error_thread = THREADS.build(dict(
                 type="ErrorMeasurementThread",
@@ -128,17 +131,26 @@ class BaseMWOfflineApp(BaseMWApp):
         return self._error_thread
 
     @property
-    def visualizer(self):
+    def visualizer(self) -> 'OnlineTrackingVisualizer':
         if not hasattr(self, '_visualizer'):
-            def _on_close(event):
-                self.reader_thread.requestInterruption()
-                self.tracker_thread.requestInterruption()
-                self.error_thread.requestInterruption()
-            self._visualizer = VISUALIZERS.build(dict(
-                self.vis_cfg,
-                on_close=_on_close
-            ))
+            self._visualizer = self._make_visualizer(self.vis_cfg)
         return self._visualizer
+    
+    def _make_visualizer(self, vis_cfg: dict) -> 'OnlineTrackingVisualizer':
+        def _on_close(event):
+            self.reader_thread.requestInterruption()
+            self.reader_thread.wait()
+            self.tracker_thread.requestInterruption()
+            self.tracker_thread.wait()
+            self.error_thread.requestInterruption()
+            self.error_thread.wait()
+        visualizer = VISUALIZERS.build(dict(
+            vis_cfg,
+            on_close=_on_close
+        ))
+        assert isinstance(visualizer, OnlineTrackingVisualizer)
+        return visualizer
+    
 
     def start(self):
         self.app = QApplication(sys.argv)
@@ -146,9 +158,18 @@ class BaseMWOfflineApp(BaseMWApp):
         self.reader_thread.raw_data.connect(self.tracker_thread.process_frame)
         self.reader_thread.ground_truth_data.connect(self.error_thread.update_ground_truth)
         self.tracker_thread.tracking_data.connect(self.error_thread.update_tracking)
-        self.tracker_thread.tracking_data.connect(self.visualizer.update_tracking)
-        self.error_thread.error_data.connect(self.visualizer.update_error_metrics)
-        self.visualizer.show()
+        # self.tracker_thread.tracking_data.connect(self.visualizer.update_tracking)
+        # self.error_thread.error_data.connect(self.visualizer.update_error_metrics)
+
+        if self.visualizer is not None:
+            self.reader_thread.array_data.connect(
+                self.visualizer.on_new_cloud, Qt.ConnectionType.QueuedConnection
+            )
+            self.tracker_thread.tracking_data.connect(
+                self.visualizer.update_tracking, Qt.ConnectionType.QueuedConnection
+            )
+            self.visualizer.show()
+
         self.error_thread.start()
         self.reader_thread.start()
         self.tracker_thread.start()
@@ -159,5 +180,5 @@ class BaseMWOfflineApp(BaseMWApp):
         return cls(
             reader_cfg=cfg.get("reader_cfg", {}),
             tracker_cfg=cfg.get("tracker_cfg", {}),
-            vis_cfg=cfg.get("vis_cfg", None)
+            vis_cfg=cfg.get("vis_cfg", None),
         )

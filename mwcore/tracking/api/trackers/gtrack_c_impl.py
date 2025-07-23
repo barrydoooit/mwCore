@@ -11,19 +11,20 @@ from ..base import BaseTracker
 
 from mwcore.tracking.src.algs.gtrack_c_impl import GTrackCBuffer 
 from mwcore.tracking.src.algs.gtrack_c_impl import GTrackCConfig
-from mwcore.tracking.src.algs.gtrack.gtrack_interface import GTRACK_STATE_VECTOR_TYPE, GTRACK_VERBOSE_TYPE
+from mwcore.tracking.src.algs.gtrack_c.gtrack_interface import GTRACK_STATE_VECTOR_TYPE, GTRACK_VERBOSE_TYPE
 
 @TRACKERS.register_module()
 class GTrackCTracker(BaseTracker):
     def __init__(self, 
                  keep_radial: bool,
-                 tracker_config: dict,
-                 radar_cfg: dict):
+                 tracker_params: dict,
+                    do_dev2standard: bool = False,
+                 radar_cfg: Optional[dict] = None):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
-        self.config = make_config_gtrackc(tracker_config)
+        self.config = make_config_gtrackc(tracker_params)
         self.tracker = GTrackCBuffer(self.config)
-        
+        self.do_dev2standard = do_dev2standard
         # Adjust batch size based on what data you're storing
         # Note: The new implementation doesn't use FB_FRAMES_BATCH in the same way
         self.batch = BatchedData(3, np.empty((0, 11 if self.keep_radial else 8)))
@@ -33,8 +34,8 @@ class GTrackCTracker(BaseTracker):
         
     def consume(self, det_obj: dict) -> Optional[List[Dict[str, Any]]]:
         """Process detection objects through the tracker"""
-        effective_data = self.normalize_data(det_obj=det_obj, keepRadial=self.keep_radial, transform=False)
-        
+        effective_data = self.normalize_data(det_obj=det_obj, keepRadial=self.keep_radial, transform=self.do_dev2standard)
+
         if effective_data.shape[0] == 0:
             return None
             

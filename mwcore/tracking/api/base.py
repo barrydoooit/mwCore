@@ -117,10 +117,14 @@ class BaseTracker(TrackingFunctionality):
     
     @property
     def cfg_sensor_height(self):
+        if self.radar_cfg is None:
+            raise ValueError("Radar configuration is not set.")
         return self.radar_cfg.get('sensor_height')
     
     @property
     def cfg_sensor_tilt(self):
+        if self.radar_cfg is None:
+            raise ValueError("Radar configuration is not set.")
         return self.radar_cfg.get('sensor_tilt')
     
     def point_transform_to_standard_axis(self, input: np.ndarray) -> np.ndarray:
@@ -141,6 +145,7 @@ class BaseTracker(TrackingFunctionality):
             Transformed point with coordinates and velocities in the standard axis system.
         """
         # Translation Matrix (T)
+        
         M = dev2standard(self.cfg_sensor_height, self.cfg_sensor_tilt)
 
         coords_h = np.concatenate((input[:3], [1.0]))

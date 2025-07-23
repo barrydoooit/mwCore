@@ -1,12 +1,10 @@
 import numpy as np
 from mwcore.radario.readers.base import SerialReader
-from mwcore.registry import READERS, THREADS, TRACKERS
+from mwcore.registry import THREADS, READERS
 from PySide6.QtCore import QThread, Signal
 import logging
 import time
-
-
-from mwcore.threads.online_reader import OnlineReaderThread
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mwcore.radario.readers.offline.base import OfflineReader
@@ -22,6 +20,8 @@ class OfflineReaderThread(QThread):
 
     def __init__(self, reader='OfflineReader', playback_speed=1.0):
         super().__init__()
+        if isinstance(reader, dict):
+            reader = READERS.build(reader)
         self.reader = reader
         self.playback_speed = playback_speed  # Multiplier for playback speed
         log.info("Initialized OfflineReaderThread")

@@ -7,7 +7,7 @@ import json
 import csv
 import os
 
-from apps.common.threads import THREADS
+from mwcore.registry import THREADS
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class ErrorMeasurementThread(QThread):
                 if self.polar:
                     position_error = np.linalg.norm(gt_position[:2] - tracking_position[:2])
                 else:
-                    print(gt_position, tracking_position)
+                    # print(gt_position, tracking_position)
                     position_error = np.linalg.norm(gt_position - tracking_position)
                 
                 # Store error metrics

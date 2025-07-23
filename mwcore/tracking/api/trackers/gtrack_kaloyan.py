@@ -16,12 +16,14 @@ from mwcore.tracking.src.algs.gtrack_kaloyan import TrackBuffer as KaloyanTrackB
 class GTrackKTracker(BaseTracker):
     def __init__(self, 
                  keep_radial: bool,
-                 tracker_config: dict,
-                 radar_cfg: dict):
+                 tracker_params: dict,
+                 do_dev2standard: bool,
+                 radar_cfg: Optional[dict] = None):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
-        self.config = make_config_kaloyan(tracker_config)
+        self.config = make_config_kaloyan(tracker_params)
         self.tracker = KaloyanTrackBuffer(self.config)
+        self.do_dev2standard = do_dev2standard
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
@@ -30,7 +32,7 @@ class GTrackKTracker(BaseTracker):
                 point_array: np.ndarray = None, 
                 sort_metric: Optional[Literal['size', 'snr', 'rel']] = None, 
                 **kwargs) -> List[np.ndarray]:
-        effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=True)
+        effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=self.do_dev2standard)
         now = time.time()
         dt = now - self.last_time
         self.last_time = now

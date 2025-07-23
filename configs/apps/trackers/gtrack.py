@@ -1,5 +1,6 @@
 tracker_cfg = dict(
     keep_radial = False,
+    do_dev2standard = False,
     type="GTrackTracker",
     tracker_params = dict(
     KF_R_STD=0.1,

@@ -3,14 +3,14 @@ import numpy as np
 from dataclasses import dataclass
 import math
 import time
-from filterpy.kalman import KalmanFilter
 
-from .gtrack import BatchedData, PointCluster, Tracker
+from .gtrack import BatchedData, PointCluster
 from ..utils import (
     altered_EuclideanDist,
     apply_clustering,
     RingBuffer,
 )
+from .gtrack_asterios import KalmanState
 from typing import List, Callable, Any
 from abc import ABC, abstractmethod
 
@@ -600,7 +600,13 @@ class TrackBuffer:
             len(batch.effective_data) > 0
             and len(self.effective_tracks) < self.config.TR_MAX_TRACKS
         ):
-            new_clusters = apply_DBscan(batch.effective_data)
+            new_clusters = apply_clustering(batch.effective_data, 
+                                            metric=partial(altered_EuclideanDist,
+                                                db_range_weight=self.config.DB_RANGE_WEIGHT,
+                                                db_z_weight=self.config.DB_Z_WEIGHT),
+                                            eps=self.config.DB_EPS,
+                                            min_samples=self.config.DB_MIN_SAMPLES_MIN,
+                                            )
 
             if len(new_clusters) > 0:
                 batch.clear()

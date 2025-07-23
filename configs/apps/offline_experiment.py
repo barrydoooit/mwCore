@@ -2,4 +2,8 @@ _base_ = [
     './trackers/gtrack_k.py',
     './readers/AReader.py',
 ]
-type = 'vis_and_track'
+type = 'BaseMWOfflineApp'
+vis_cfg = dict(
+    type='OnlineTrackingVisualizer',
+    tracking_mode='bbox',  # or 'dot' for dot mode
+)

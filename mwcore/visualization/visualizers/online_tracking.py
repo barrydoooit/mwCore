@@ -168,3 +168,9 @@ class OnlineTrackingVisualizer(OnlinePointCloudVisualizer):
                 )
                 self.plot3d.plot_3d.addItem(box_item)
                 self.tracker_boxes.append(box_item)
+
+
+    def closeEvent(self, event):
+        if self._on_close:
+            self._on_close(event)
+        event.accept()
