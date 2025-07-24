@@ -61,6 +61,7 @@ class OfflineReaderThread(QThread):
             elapsed = time.time() - start_time
             remaining_sleep = max(0, sleep_time - elapsed)
             time.sleep(remaining_sleep)
+        self.reader.close()
             
     def set_playback_speed(self, speed):
         """Set the playback speed multiplier"""
@@ -85,8 +86,3 @@ class OfflineReaderThread(QThread):
         else:
             # Return empty array if no points
             return np.empty((0, 5))
-            
-    def terminate(self):
-        """Clean up when thread is terminated"""
-        self.reader.close()
-        return super().terminate()

@@ -11,6 +11,7 @@ from typing import Any, List, Tuple
 from ..palmar import AdaptiveOrderHMM, CPDA
 from dataclasses import dataclass
 from typing import Callable, List
+from copy import deepcopy
 
 @dataclass
 class RKFConfig:
@@ -227,7 +228,7 @@ class RKFClusterTrack:
         self.group_disp_est = np.eye(4) * config.KF_GROUP_DISP_EST_INIT
         self.cluster = cluster
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH + 1, cluster.pointcloud)
-        self.state = RecursiveKalmanFilter(R=np.eye(4) * config.KF_R_STD**2)
+        self.state = RecursiveKalmanFilter(R=np.eye(2) * config.KF_R_STD**2)
         self.status = ACTIVE  # ACTIVE status
         self.lifetime = 0
         self.predict_x = self.state.x
@@ -308,8 +309,8 @@ class RKFClusterTrack:
         
         # print(f"Classified {len(self.body_points)} body points and {len(self.limb_points)} limb points")  # Debug line
         # Update body state if possible
-        if len(self.body_points) >= self.config.MIN_TORSO_POINTS:
-            print(f"Updating body state with {len(self.body_points)} points")  # Debug line
+        # if len(self.body_points) >= self.config.MIN_TORSO_POINTS:
+            # print(f"Updating body state with {len(self.body_points)} points")
         
         # Original processing 
         if not useBatch:
@@ -473,8 +474,9 @@ class RKFTrackBuffer(Tracker):
             H_i = np.dot(H, track.state.x).flatten()
             
             # Calculate the measurement covariance matrix
-            C_g_j = track.state.P + track._get_Rm() + track.group_disp_est
-            C_g_j_obs = H @ C_g_j @ H.T 
+            C_g_j = track.state.P + track.group_disp_est
+            R_m = track.get_Rm()  # (2,2)
+            C_g_j_obs = H @ C_g_j @ H.T + R_m
             for i, point in enumerate(full_set):
                 r, theta, _ = point[-3:]  # Polar coordinates
                 z = np.array([r, theta])

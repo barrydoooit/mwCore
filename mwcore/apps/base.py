@@ -4,14 +4,16 @@ import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
-from mwcore.threads.error_measurement import ErrorMeasurementThread
-from mwcore.threads.online_tracking import OnlineTrackingThread
-from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
+
 from mwcore.visualization.visualizers.online_tracking import OnlineTrackingVisualizer
 
 if TYPE_CHECKING:
     from mwcore.radario.readers.TI.base import BaseTIBufferedReader
     from mwcore.threads.online_reader import OnlineReaderThread
+    from mwcore.threads.offline_reader import OfflineReaderThread
+    from mwcore.threads.error_measurement import ErrorMeasurementThread
+    from mwcore.threads.online_tracking import OnlineTrackingThread
+    from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
     from PySide6.QtWidgets import QMainWindow
 
 from mwcore.registry import READERS, THREADS, VISUALIZERS, APPS
@@ -99,7 +101,7 @@ class BaseMWOfflineApp(BaseMWApp):
         self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else {}
 
     @property
-    def reader_thread(self) -> 'OnlineReaderThread':
+    def reader_thread(self) -> 'OfflineReaderThread':
         if not hasattr(self, '_reader_thread'):
             self._reader_thread = THREADS.build(dict(
                 type="OfflineReaderThread",
@@ -138,12 +140,9 @@ class BaseMWOfflineApp(BaseMWApp):
     
     def _make_visualizer(self, vis_cfg: dict) -> 'OnlineTrackingVisualizer':
         def _on_close(event):
-            self.reader_thread.requestInterruption()
-            self.reader_thread.wait()
-            self.tracker_thread.requestInterruption()
-            self.tracker_thread.wait()
             self.error_thread.requestInterruption()
-            self.error_thread.wait()
+            self.reader_thread.requestInterruption()
+            self.tracker_thread.requestInterruption()
         visualizer = VISUALIZERS.build(dict(
             vis_cfg,
             on_close=_on_close
@@ -173,7 +172,12 @@ class BaseMWOfflineApp(BaseMWApp):
         self.error_thread.start()
         self.reader_thread.start()
         self.tracker_thread.start()
-        sys.exit(self.app.exec())
+        # Run the event loop
+        exit_code = self.app.exec()
+        # After the event loop exits, wait for threads to finish
+        self.reader_thread.wait()
+
+
 
     @classmethod
     def from_cfg(cls, cfg):

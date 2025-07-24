@@ -78,8 +78,8 @@ class ErrorMeasurementThread(QThread):
                 if self.polar:
                     position_error = np.linalg.norm(gt_position[:2] - tracking_position[:2])
                 else:
-                    # print(gt_position, tracking_position)
                     position_error = np.linalg.norm(gt_position - tracking_position)
+                print(gt_position, tracking_position)
                 
                 # Store error metrics
                 self.metrics_history['position_error'].append(position_error)
@@ -120,10 +120,8 @@ class ErrorMeasurementThread(QThread):
                         if dataset.find('asterios') != -1:
                             first_gt = ground_truth[0]
                             reshaped_data = np.array(first_gt).reshape((3, -1))
-                            # mirrox on  axis 1
-                            reshaped_data[1, :] = -reshaped_data[1, :]
-                            
-
+                            # mirror on 0 axis
+                            reshaped_data[0, :] = -reshaped_data[0, :]
                             return np.array([reshaped_data[0, 0], reshaped_data[2, 0], reshaped_data[1, 0]])
                         elif dataset.find('mri') != -1:
                             reshaped_data = np.array(ground_truth).reshape((3, -1))  
@@ -274,13 +272,9 @@ class ErrorMeasurementThread(QThread):
         return report
         
     def run(self):
-        """Main thread loop - not used actively as we're using signals/slots"""
         log.info("Starting ErrorMeasurementThread")
         while not self.isInterruptionRequested():
             time.sleep(0.1)  # Just sleep and wait for signal connections
-            
-    def terminate(self):
-        """Print statistics when the thread is terminated"""
+        # When interruption is requested, print stats and exit
         report = self.generate_statistics_report()
         print(report)
-        return super().terminate()
