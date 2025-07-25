@@ -39,11 +39,15 @@ class GTrackKTracker(BaseTracker):
         self.tracker.dt = dt
         if effective_data.shape[0] > 0:
             self.tracker.track(effective_data, self.batch)
-        locations = [track.cluster.centroid[:3] for track in self.tracker.effective_tracks]
+        # locations = [track.cluster.centroid[:3] for track in self.tracker.effective_tracks]
+        states = [track.state.x.flatten()[:3] for track in self.tracker.effective_tracks]
+
         if sort_metric is not None:
             sorted_indices = self.sort_results(metric=sort_metric, **kwargs)
-            locations = [locations[i] for i in sorted_indices]
-        return locations
+            # locations = [locations[i] for i in sorted_indices]
+            states = [states[i] for i in sorted_indices]
+        return states
+        # return locations
 
     def sort_results(self, metric: Literal['size', 'snr', 'rel'] = 'size', **kwargs) -> np.ndarray:
         clusters = [track.cluster for track in self.tracker.effective_tracks]

@@ -141,6 +141,7 @@ class BaseMWOfflineApp(BaseMWApp):
     def _make_visualizer(self, vis_cfg: dict) -> 'OnlineTrackingVisualizer':
         def _on_close(event):
             self.error_thread.requestInterruption()
+            self.error_thread.wait()
             self.reader_thread.requestInterruption()
             self.tracker_thread.requestInterruption()
         visualizer = VISUALIZERS.build(dict(
@@ -173,9 +174,8 @@ class BaseMWOfflineApp(BaseMWApp):
         self.reader_thread.start()
         self.tracker_thread.start()
         # Run the event loop
-        exit_code = self.app.exec()
-        # After the event loop exits, wait for threads to finish
-        self.reader_thread.wait()
+        sys.exit(self.app.exec())
+
 
 
 

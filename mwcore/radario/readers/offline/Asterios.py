@@ -59,6 +59,7 @@ class AsteriosOfflineReader(OfflineReader):
                 log.warning(f"No data for frame {frame_number}")
                 if frame_number == -1:
                     log.info("Reached the end of the data stream")
+                    self.current_frame = -1
                     return 0, -1, {}, []
                 return 0, frame_number, {}, []
                 
@@ -103,8 +104,6 @@ class OfflineManager:
         Read the next batch of frames from the experiment file.
     get_data()
         Get the data for the current frame.
-    is_finished() -> bool
-        Check if the offline experiment has finished.
     """
 
     def __init__(self, experiment_path):
@@ -257,6 +256,7 @@ class OfflineManager:
 
         except FileNotFoundError:
             print(f"File not found: {mmwave_file_path} or {kinect_path}")
+            raise FileNotFoundError(f"File not found: {mmwave_file_path} or {kinect_path}")
 
 
     def get_data(self):
@@ -324,14 +324,3 @@ class OfflineManager:
         """
         current_frame = self.kinect_joints[self.frame_count]
         return current_frame
-
-    def is_finished(self):
-        """
-        Check if the offline experiment has finished.
-
-        Returns
-        -------
-        bool
-            True if the experiment has finished (last_frame is None), False otherwise.
-        """
-        return self.last_frame is None

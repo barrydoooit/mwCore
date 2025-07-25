@@ -40,13 +40,18 @@ class RKFTracker(BaseTracker):
         self.tracker.dt = dt
         if effective_data.shape[0] > 0:
             self.tracker.track(effective_data, self.batch)
-        locations = [track.cluster.centroid for track in self.tracker.effective_tracks]
+        # locations = [track.cluster.centroid for track in self.tracker.effective_tracks] #This outputs [r, θ, r_dot]
+        states = [track.state.x.flatten()[:3] for track in self.tracker.effective_tracks] #[r, r_dot, θ, θ_dot]
+        states = [np.array([s[0], s[2], s[1]]) for s in states]  # Reorder to [r, θ, r_dot]
+
         if not self.result_in_polar:
-            locations = self.polar_to_cartesian(locations)
+            # locations = self.polar_to_cartesian(locations)
+            states = self.polar_to_cartesian(states)
         if sort_metric is not None:
             sorted_indices = self.sort_results(metric=sort_metric, **kwargs)
-            locations = [locations[i] for i in sorted_indices]
-        return locations
+            # locations = [locations[i] for i in sorted_indices]
+            states = [states[i] for i in sorted_indices]
+        return states
 
     def polar_to_cartesian(self, polar_coords: List[np.ndarray]) -> List[np.ndarray]:
         """
