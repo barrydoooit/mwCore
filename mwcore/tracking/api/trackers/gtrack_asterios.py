@@ -19,7 +19,7 @@ class GTrackATracker(BaseTracker):
     def __init__(self, 
                  keep_radial: bool,
                  tracker_params: dict,
-                    do_dev2standard: bool = False,
+                 do_dev2standard: bool = False,
                  radar_cfg: Optional[dict] = None):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial

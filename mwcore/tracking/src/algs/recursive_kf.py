@@ -47,7 +47,8 @@ class RKFConfig:
     TR_MAX_TRACKS: int  # e.g. 4
     TR_VEL_THRES: float
 
-    ENABLE_TORSO_TRACKING: bool  # New flag
+    ENABLE_OUTLIER_TREATMENT: bool  # Whether to apply outlier treatment
+    ENABLE_TORSO_TRACKING: bool  #
     MAX_LIMB_VELOCITY: float         # m/s
     MIN_TORSO_MOVEMENT: float       # meters
     TORSO_DENSITY_RADIUS: float     # meters
@@ -233,8 +234,9 @@ class RKFClusterTrack:
         self.lifetime = 0
         self.predict_x = self.state.x
         self.color = np.random.rand(3)
-        self.usePalmar = usePalmar
+        self.usePalmar = usePalmar 
         self.useTorsoTracking = config.ENABLE_TORSO_TRACKING
+        self.enableOutlierTreatment = config.ENABLE_OUTLIER_TREATMENT
         r, theta, r_dot = cluster.centroid[-3:]  # Assume last 3 are [r, θ, r_dot]
         self.state.x = np.array([
             [r], 
@@ -557,7 +559,8 @@ class RKFTrackBuffer(Tracker):
     def track(self, pointcloud: np.array, batch: BatchedData, clusteringAlgorithm: str = "DBSCAN") -> None:
         if clusteringAlgorithm not in ["DBSCAN", "BIRCH", "both"]:
             raise ValueError("Invalid clustering algorithm. Please use 'DBSCAN', 'BIRCH', or 'both'.")
-        pointcloud = self.remove_outliers(pointcloud)
+        if self.enableOutlierTreatment:
+            pointcloud = self.remove_outliers(pointcloud)
         self._predict_all()
         unassigned = self._associate_points_to_tracks(pointcloud)
 

@@ -95,10 +95,13 @@ class BaseMWOfflineApp(BaseMWApp):
     def __init__(self,
                  reader_cfg: dict,
                  tracker_cfg: dict,
-                 vis_cfg: Optional[dict] = None):
+                 vis_cfg: Optional[dict] = None,
+                 error_cfg: Optional[dict] = None):
         self.reader_cfg = deepcopy(reader_cfg)
         self.tracker_cfg = deepcopy(tracker_cfg)
         self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else {}
+        self.error_cfg = deepcopy(error_cfg) if error_cfg is not None else {}
+        
 
     @property
     def reader_thread(self) -> 'OfflineReaderThread':
@@ -127,8 +130,7 @@ class BaseMWOfflineApp(BaseMWApp):
                 tracker_name=self.tracker_cfg.get("type", "default_experiment"),
                 dataset_name=self.reader_cfg.get("type", "default_dataset") +
                              self.reader_cfg.get("data", "default_dataset").replace("data", "").replace("/", "_").replace("?", ""),
-                save_stats=self.reader_cfg.get("save_stats", True),
-                polar=self.tracker_cfg.get("keep_radial", False),
+                error_cfg=self.reader_cfg.get("error_cfg", {}),
             ))
         return self._error_thread
 
@@ -154,6 +156,15 @@ class BaseMWOfflineApp(BaseMWApp):
 
     def start(self):
         self.app = QApplication(sys.argv)
+        if self.error_cfg.save_stats:
+            # Prompt for experiment name if not provided
+            from PySide6.QtWidgets import QInputDialog
+            exp_name, ok = QInputDialog.getText(None, "Experiment Name", "Enter experiment name to save error statistics:")
+            if ok and exp_name:
+                self.error_cfg["experiment_name"] = exp_name
+            else:
+                self.error_cfg["experiment_name"] = "default_experiment"
+
         # Connect signals
         self.reader_thread.raw_data.connect(self.tracker_thread.process_frame)
         self.reader_thread.ground_truth_data.connect(self.error_thread.update_ground_truth)
@@ -185,4 +196,5 @@ class BaseMWOfflineApp(BaseMWApp):
             reader_cfg=cfg.get("reader_cfg", {}),
             tracker_cfg=cfg.get("tracker_cfg", {}),
             vis_cfg=cfg.get("vis_cfg", None),
+            error_cfg=cfg.get("error_cfg", None)
         )

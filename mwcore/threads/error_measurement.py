@@ -16,8 +16,8 @@ class ErrorMeasurementThread(QThread):
     """Thread to calculate error metrics between ground truth and tracking data"""
     
     error_data = Signal(object)  # Will emit error metrics
-    
-    def __init__(self, save_stats=True, stats_dir='error_stats', tracker_name=None, dataset_name=None, polar=False):
+
+    def __init__(self, stats_dir='error_stats', tracker_name=None, dataset_name=None, error_cfg=None):
         super().__init__()
         self.ground_truth = None
         self.tracking_data = None
@@ -30,12 +30,15 @@ class ErrorMeasurementThread(QThread):
         self.last_calculation_time = 0
         self.calculation_interval = 0.07  # Calculate metrics every 70ms
         
-        self.polar = polar  # Whether to handle polar coordinates
-        self.save_stats = save_stats
-        self.stats_dir = Path(stats_dir)
+        self.polar = error_cfg.get("polar", False) if error_cfg else False
+        self.save_stats = error_cfg.get("save_stats", True) if error_cfg else True
+        self.full_metrics = error_cfg.get("full_metrics", False) if error_cfg else False
+        # self.stats_dir = Path(stats_dir)
+        self.stats_dir =  Path(error_cfg.get("stats_dir", stats_dir)) if error_cfg else Path(stats_dir)
+        self.experiment_name = error_cfg.get("experiment_name", "default_experiment") if error_cfg else "default_experiment"
         self.tracker_name = tracker_name
         self.dataset_name = dataset_name
-        if save_stats and not self.stats_dir.exists():
+        if self.save_stats and not self.stats_dir.exists():
             self.stats_dir.mkdir(parents=True, exist_ok=True)
             
         log.info("Initialized ErrorMeasurementThread")
@@ -126,8 +129,9 @@ class ErrorMeasurementThread(QThread):
                         elif dataset.find('mri') != -1:
                             reshaped_data = np.array(ground_truth).reshape((3, -1))  
                             to_consider = [11, 12, 5, 6]  # HipLeft, HipRight, Left shoulder, Right shoulder
-                            extra_point = reshaped_data[:, to_consider]  
+                            extra_point = reshaped_data[:, to_consider]                             
                             mean_spine = np.mean([extra_point[0, :], extra_point[2, :], extra_point[1, :]], axis=1)
+                            mean_spine[0] = -mean_spine[0]  # Mirror x coordinate
                             return mean_spine.flatten()
                         elif dataset.find('mili') != -1:
                             reshaped_data = np.array(ground_truth).reshape((3, -1))  
@@ -200,14 +204,16 @@ class ErrorMeasurementThread(QThread):
             error_data_file = self.stats_dir / f"{tracker_name}{dataset_name}_error_data_{timestamp}.csv"
             master_csv_file = self.stats_dir / "master_stats.csv"
 
-            with open(stats_file, 'w') as f:
-                json.dump(stats, f, indent=2)
+            if self.full_metrics:
+                with open(stats_file, 'w') as f:
+                    json.dump(stats, f, indent=2)
 
             # Prepare flat row for master CSV
             row = {
                 "timestamp": timestamp,
                 "tracker_name": tracker_name,
                 "dataset_name": dataset_name,
+                "experiment_name": self.experiment_name,
                 "total_frames": stats["total_frames"],
                 "error_samples": stats["error_samples"],
                 "mean_error": stats["mean_error"],
@@ -232,17 +238,19 @@ class ErrorMeasurementThread(QThread):
                 writer.writerow(row)
 
             # Save raw error data for plotting
-            with open(error_data_file, 'w') as f:
-                f.write("frame,timestamp,error\n")
-                for frame, ts, err in zip(
-                    self.metrics_history['frame_numbers'],
-                    self.metrics_history['timestamps'],
-                    self.metrics_history['position_error']
-                ):
-                    f.write(f"{frame},{ts},{err}\n")
+            if self.full_metrics:
+                with open(error_data_file, 'w') as f:
+                    f.write("frame,timestamp,error\n")
+                    for frame, ts, err in zip(
+                        self.metrics_history['frame_numbers'],
+                        self.metrics_history['timestamps'],
+                        self.metrics_history['position_error']
+                    ):
+                        f.write(f"{frame},{ts},{err}\n")
 
-            log.info(f"Saved error statistics to {stats_file}")
-            log.info(f"Saved raw error data to {error_data_file}")
+            if self.full_metrics:
+                log.info(f"Saved error statistics to {stats_file}")
+                log.info(f"Saved raw error data to {error_data_file}")
             log.info(f"Appended summary to {master_csv_file}")
         
         # Format for printing

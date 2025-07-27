@@ -86,6 +86,7 @@ class MRIOfflineReader(OfflineReader):
             
         except Exception as e:
             log.error(f"Error reading MIR offline data: {e}")
+            self.current_frame = -1
             return 0, self.last_read, {}, []
 
     def read_next_frames(self):

@@ -27,7 +27,7 @@ class OnlineTrackingThread(QThread):
     def process_frame(self, det_obj):
         locations = []
         if det_obj is not None:
-            locations = self.tracker.consume(det_obj)
+            locations = self.tracker.consume(det_obj, sort_metric='size')
             self.tracking_data.emit(locations)
             # print(locations)
 

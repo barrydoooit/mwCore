@@ -79,6 +79,7 @@ class RKFTracker(BaseTracker):
     
     def sort_results(self, metric: Literal['size', 'snr', 'rel'] = 'size', **kwargs) -> np.ndarray:
         clusters = [track.cluster for track in self.tracker.effective_tracks]
+        print(f"Sorting {len(clusters)} clusters by {metric}")
         if metric == 'size':
             cluster_sizes = [c.point_num for c in clusters]
             sorted_indices = np.argsort(cluster_sizes)[::-1]
@@ -146,9 +147,10 @@ def make_config_rkf(raw: dict) -> RKFConfig:
         TR_GATE=raw.get("TR_GATE"),
         TR_MAX_TRACKS=raw.get("TR_MAX_TRACKS"),
         TR_VEL_THRES=raw.get("TR_VEL_THRES"),
-        ENABLE_TORSO_TRACKING=raw.get("ENABLE_TORSO_TRACKING", False),  # New flag
-        MAX_LIMB_VELOCITY=raw.get("MAX_LIMB_VELOCITY", 2.0),  # m/s
-        MIN_TORSO_MOVEMENT=raw.get("MIN_TORSO_MOVEMENT", 0.1),  # meters
-        TORSO_DENSITY_RADIUS=raw.get("TORSO_DENSITY_RADIUS", 0.3),  # meters
-        MIN_TORSO_POINTS=raw.get("MIN_TORSO_POINTS", 5),  # Minimum points to consider torso tracking
+        ENABLE_OUTLIER_TREATMENT=raw.get("ENABLE_OUTLIER_TREATMENT"),
+        ENABLE_TORSO_TRACKING=raw.get("ENABLE_TORSO_TRACKING"),  # New flag
+        MAX_LIMB_VELOCITY=raw.get("MAX_LIMB_VELOCITY"),  # m/s
+        MIN_TORSO_MOVEMENT=raw.get("MIN_TORSO_MOVEMENT"),  # meters
+        TORSO_DENSITY_RADIUS=raw.get("TORSO_DENSITY_RADIUS"),  # meters
+        MIN_TORSO_POINTS=raw.get("MIN_TORSO_POINTS"),  # Minimum points to consider torso tracking
     ) 
