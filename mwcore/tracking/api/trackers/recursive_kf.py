@@ -79,7 +79,6 @@ class RKFTracker(BaseTracker):
     
     def sort_results(self, metric: Literal['size', 'snr', 'rel'] = 'size', **kwargs) -> np.ndarray:
         clusters = [track.cluster for track in self.tracker.effective_tracks]
-        print(f"Sorting {len(clusters)} clusters by {metric}")
         if metric == 'size':
             cluster_sizes = [c.point_num for c in clusters]
             sorted_indices = np.argsort(cluster_sizes)[::-1]

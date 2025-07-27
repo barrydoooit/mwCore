@@ -236,7 +236,6 @@ class RKFClusterTrack:
         self.color = np.random.rand(3)
         self.usePalmar = usePalmar 
         self.useTorsoTracking = config.ENABLE_TORSO_TRACKING
-        self.enableOutlierTreatment = config.ENABLE_OUTLIER_TREATMENT
         r, theta, r_dot = cluster.centroid[-3:]  # Assume last 3 are [r, θ, r_dot]
         self.state.x = np.array([
             [r], 
@@ -448,6 +447,7 @@ class RKFTrackBuffer(Tracker):
         self.dt = 0
         self.t = time.time()
         self.usePalmar = usePalmar
+        self.enableOutlierTreatment = config.ENABLE_OUTLIER_TREATMENT
 
     def _maintain_tracks(self) -> None:
         for track in self.effective_tracks:
