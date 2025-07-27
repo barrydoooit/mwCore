@@ -31,7 +31,7 @@ class ErrorMeasurementThread(QThread):
         self.calculation_interval = 0.07  # Calculate metrics every 70ms
         
         self.polar = error_cfg.get("polar", False) if error_cfg else False
-        self.save_stats = error_cfg.get("save_stats", True) if error_cfg else True
+        self.save_stats = error_cfg.get("save_stats", True) if error_cfg else False
         self.full_metrics = error_cfg.get("full_metrics", False) if error_cfg else False
         # self.stats_dir = Path(stats_dir)
         self.stats_dir =  Path(error_cfg.get("stats_dir", stats_dir)) if error_cfg else Path(stats_dir)

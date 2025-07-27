@@ -130,7 +130,7 @@ class BaseMWOfflineApp(BaseMWApp):
                 tracker_name=self.tracker_cfg.get("type", "default_experiment"),
                 dataset_name=self.reader_cfg.get("type", "default_dataset") +
                              self.reader_cfg.get("data", "default_dataset").replace("data", "").replace("/", "_").replace("?", ""),
-                error_cfg=self.reader_cfg.get("error_cfg", {}),
+                error_cfg=self.error_cfg
             ))
         return self._error_thread
 
@@ -161,9 +161,9 @@ class BaseMWOfflineApp(BaseMWApp):
             from PySide6.QtWidgets import QInputDialog
             exp_name, ok = QInputDialog.getText(None, "Experiment Name", "Enter experiment name to save error statistics:")
             if ok and exp_name:
-                self.error_cfg["experiment_name"] = exp_name
+                self.error_thread.experiment_name = exp_name
             else:
-                self.error_cfg["experiment_name"] = "default_experiment"
+                self.error_thread.experiment_name = "default"
 
         # Connect signals
         self.reader_thread.raw_data.connect(self.tracker_thread.process_frame)
