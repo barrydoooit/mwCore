@@ -24,6 +24,11 @@ tracker_cfg = dict(
     TR_LIFETIME_STATIC=7,
     TR_GATE=4.5,
     TR_MAX_TRACKS=4,
-    TR_VEL_THRES = 0.12
+    TR_VEL_THRES = 0.12,
+    ENABLE_TORSO_TRACKING = False,  # New flag
+    MAX_LIMB_VELOCITY = 1.0,    # m/s
+    MIN_TORSO_MOVEMENT = 0.1 ,      # meters
+    TORSO_DENSITY_RADIUS = 0.3,    # meters
+    MIN_TORSO_POINTS = 8
     ),
 )

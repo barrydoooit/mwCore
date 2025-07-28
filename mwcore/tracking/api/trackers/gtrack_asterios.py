@@ -128,4 +128,10 @@ def make_config_asterios(raw: dict) -> AsteriosConfig:
         TR_GATE=raw.get("TR_GATE"),
         TR_MAX_TRACKS=raw.get("TR_MAX_TRACKS"),
         TR_VEL_THRES=raw.get("TR_VEL_THRES"),
+        ENABLE_OUTLIER_TREATMENT=raw.get("ENABLE_OUTLIER_TREATMENT"),
+        ENABLE_TORSO_TRACKING=raw.get("ENABLE_TORSO_TRACKING", False),
+        MAX_LIMB_VELOCITY=raw.get("MAX_LIMB_VELOCITY", 1.0),  # m/s
+        MIN_TORSO_MOVEMENT=raw.get("MIN_TORSO_MOVEMENT", 0.1),  # meters
+        TORSO_DENSITY_RADIUS=raw.get("TORSO_DENSITY_RADIUS", 0.3),  # meters
+        MIN_TORSO_POINTS=raw.get("MIN_TORSO_POINTS", 8),
     )

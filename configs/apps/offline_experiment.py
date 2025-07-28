@@ -1,6 +1,6 @@
 _base_ = [
     './trackers/rkf.py',
-    './readers/AReader.py',
+    './readers/MRIReader.py',
 ]
 type = 'BaseMWOfflineApp'
 isExperimentPolar=True

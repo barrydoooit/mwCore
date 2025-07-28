@@ -23,12 +23,17 @@ tracker_cfg = dict(
         TR_LIFETIME_DYNAMIC=3,
         TR_LIFETIME_STATIC=7,
         TR_GATE=4.5,
-        TR_MAX_TRACKS=2,
+        TR_MAX_TRACKS=4,
         TR_VEL_THRES=0.12,
         NUM_DYNAMIC_POINTS_THRESHOLD=3,
         DOPPLER_THRESHOLD=0,
         MIN_VELOCITY_STOP_NO_DYNAMIC_POINTS=0.04,
         MIN_VELOCITY_STOP_NO_POINTS=0.04,
-        MIN_VELOCITY_SLOW_DOWN=1
+        MIN_VELOCITY_SLOW_DOWN=1,
+        ENABLE_TORSO_TRACKING = False, 
+        MAX_LIMB_VELOCITY = 1.0,    # m/s
+        MIN_TORSO_MOVEMENT = 0.1 ,      # meters
+        TORSO_DENSITY_RADIUS = 0.3,    # meters
+        MIN_TORSO_POINTS = 8
     )
 )
