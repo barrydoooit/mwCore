@@ -1,2 +1,2 @@
 from .TI import *
-from .offline import *
+from .offlineReaders import *
