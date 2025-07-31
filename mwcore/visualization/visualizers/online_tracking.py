@@ -19,11 +19,13 @@ class OnlineTrackingVisualizer(OnlinePointCloudVisualizer):
         self,
         parent=None,
         tracking_mode: Optional[Literal['dot', 'bbox']] = None,
+        receive_polar: bool = False,
         on_close: callable = None
     ):
         super(OnlineTrackingVisualizer, self).__init__(parent=parent, on_close=on_close)
         # -- Tracking visualization configuration --
         self.tracking_mode = tracking_mode
+        self.receive_polar = receive_polar
         
         # A small palette of RGBA colors we’ll cycle through:
         self._color_palette = [
@@ -65,6 +67,7 @@ class OnlineTrackingVisualizer(OnlinePointCloudVisualizer):
         # Handle None or invalid inputs
         if location is None:
             return
+     
 
         # Convert `location` into a numpy array `loc_arr` of shape (N, ≥3)
         if isinstance(location, np.ndarray):
@@ -88,6 +91,17 @@ class OnlineTrackingVisualizer(OnlinePointCloudVisualizer):
         else:
             return
 
+           
+        if self.receive_polar:
+            cartesian_coords = []
+            for p in loc_arr:
+                r, theta, r_dot = p[:3]
+                x = r * np.cos(theta)
+                y = r * np.sin(theta)
+                z = 0.0
+                cartesian_coords.append(np.array([x, y, z]))
+            loc_arr = np.vstack(cartesian_coords)
+            
         # Apply the same transformation (if provided) to all points
         if trans_matrix is not None and trans_matrix.shape == (4, 4):
             ones = np.ones((loc_arr.shape[0], 1), dtype=float)
@@ -168,3 +182,9 @@ class OnlineTrackingVisualizer(OnlinePointCloudVisualizer):
                 )
                 self.plot3d.plot_3d.addItem(box_item)
                 self.tracker_boxes.append(box_item)
+
+
+    def closeEvent(self, event):
+        if self._on_close:
+            self._on_close(event)
+        event.accept()

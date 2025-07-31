@@ -1,6 +1,6 @@
 from copy import deepcopy
 import math
-from typing import List, Optional, Protocol
+from typing import Any, List, Optional, Protocol
 import numpy as np
 
 from mwcore.utils.tranforms import dev2standard
@@ -9,7 +9,7 @@ from mwcore.utils.tranforms import dev2standard
 
 class TrackingFunctionality(Protocol):
     """Protocol for tracking functionality."""
-    def consume(self, pcd_data_dict: dict, point_array: np.ndarray ) -> List[np.ndarray]: ...
+    def consume(self, det_obj: Any, point_array: np.ndarray ) -> List[np.ndarray]: ...
     
 
 class BaseTracker(TrackingFunctionality):
@@ -20,7 +20,7 @@ class BaseTracker(TrackingFunctionality):
                        det_obj: Optional[dict] = None, 
                        point_array: Optional[np.ndarray] = None, 
                        keepRadial: bool = False, 
-                       transform: bool = True):
+                       transform: bool = False):
         """
         Preprocesses the point cloud data from the sensor.
 
@@ -117,10 +117,14 @@ class BaseTracker(TrackingFunctionality):
     
     @property
     def cfg_sensor_height(self):
+        if self.radar_cfg is None:
+            raise ValueError("Radar configuration is not set.")
         return self.radar_cfg.get('sensor_height')
     
     @property
     def cfg_sensor_tilt(self):
+        if self.radar_cfg is None:
+            raise ValueError("Radar configuration is not set.")
         return self.radar_cfg.get('sensor_tilt')
     
     def point_transform_to_standard_axis(self, input: np.ndarray) -> np.ndarray:
@@ -141,6 +145,7 @@ class BaseTracker(TrackingFunctionality):
             Transformed point with coordinates and velocities in the standard axis system.
         """
         # Translation Matrix (T)
+        
         M = dev2standard(self.cfg_sensor_height, self.cfg_sensor_tilt)
 
         coords_h = np.concatenate((input[:3], [1.0]))

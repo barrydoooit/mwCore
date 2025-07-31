@@ -1,7 +1,7 @@
 tracker_cfg = dict(
     keep_radial = False,
     do_dev2standard = False,
-    type="GTrackTracker",
+    type="GTrackATracker",
     tracker_params = dict(
     KF_R_STD=0.1,
     KF_Q_STD=1,
@@ -14,7 +14,6 @@ tracker_cfg = dict(
     KF_SPREAD_LIM=[0.2, 0.2, 2, 1.2, 1.2, 0.2],
     DB_POINTS_THRES=40,
     DB_SPREAD_THRES=0.7,
-    DB_INNER_EPS=0.1,
     DB_EPS=0.3,
     DB_RANGE_WEIGHT=0.03,
     DB_Z_WEIGHT=0.4,
@@ -25,6 +24,11 @@ tracker_cfg = dict(
     TR_LIFETIME_STATIC=7,
     TR_GATE=4.5,
     TR_MAX_TRACKS=4,
-    TR_VEL_THRES = 0.12
+    TR_VEL_THRES = 0.12,
+    ENABLE_TORSO_TRACKING = False,  # New flag
+    MAX_LIMB_VELOCITY = 1.0,    # m/s
+    MIN_TORSO_MOVEMENT = 0.1 ,      # meters
+    TORSO_DENSITY_RADIUS = 0.3,    # meters
+    MIN_TORSO_POINTS = 8
     ),
 )

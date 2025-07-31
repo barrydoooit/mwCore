@@ -16,16 +16,18 @@ class GTrackTracker(BaseTracker):
     def __init__(self,
                  keep_radial: bool,
                  tracker_params: dict,
+                 do_dev2standard: bool,
                  radar_cfg: Optional[dict] = None):
         super().__init__(radar_cfg=radar_cfg)
         self.keep_radial = keep_radial
         self.config = make_config_gtrack(tracker_params)
         self.tracker = GTrackBuffer(self.config)
+        self.do_dev2standard = do_dev2standard
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
     def consume(self, det_obj: dict = None, point_array: np.ndarray = None):
-        effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=True)
+        effective_data = self.normalize_data(det_obj=det_obj, point_array=point_array, keepRadial=self.keep_radial, transform=self.do_dev2standard)
         now = time.time()
         dt = now - self.last_time
         self.last_time = now

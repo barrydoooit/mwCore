@@ -1,0 +1,26 @@
+_base_ = [
+    '../__base__/default_runtime.py',
+    './trackers/rkf.py',
+    './datasets/asterios_paw.py',
+]
+type = 'TrackingApp'
+vis=False # Set to True to enable visualization
+reader_cfg=dict(
+    type='PoseEstim3DDatasetReader',
+    playback_speed=2.0 if vis else None,
+)
+vis_cfg = dict(
+    type='OnlineTrackingVisualizer',
+    tracking_mode='bbox',  # or 'dot' for dot mode
+    receive_polar=False,
+    is_on=vis
+)
+evaluators = [
+    dict(
+        type='SkelPositionalErrorEvaluator',
+        keypoints_involved=[0], # Spine Base, Left shoulder, Right shoulder
+        model_name='RKF',
+        dataset_name='asterios-paw',
+        out_path='exp_data/tracking/positional_error/',
+    )
+]

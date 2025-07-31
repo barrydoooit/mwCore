@@ -49,6 +49,12 @@ class AsteriosConfig:
     TR_GATE: float
     TR_MAX_TRACKS: int
     TR_VEL_THRES: float
+    ENABLE_OUTLIER_TREATMENT: bool
+    ENABLE_TORSO_TRACKING: bool 
+    MAX_LIMB_VELOCITY: float 
+    MIN_TORSO_MOVEMENT: float
+    TORSO_DENSITY_RADIUS: float 
+    MIN_TORSO_POINTS: int
 
 
 ACTIVE: int = 1
