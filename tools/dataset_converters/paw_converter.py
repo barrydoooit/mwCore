@@ -5,7 +5,7 @@ import logging
 import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-
+from itertools import chain
 import numpy as np
 import pandas as pd
 import h5py
@@ -210,3 +210,6 @@ class AsteriosPawDatasetConverter:
             pkl = self.output_root / f'info_{split}.pkl'
             with open(pkl, 'wb') as f:
                 pickle.dump(records, f)
+        all_records = list(chain.from_iterable(self.records.values()))
+        with open(self.output_root / 'info_all.pkl', 'wb') as f:
+            pickle.dump(all_records, f)

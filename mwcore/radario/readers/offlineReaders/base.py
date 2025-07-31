@@ -15,7 +15,7 @@ class OfflineReader(BaseReader):
         self._finished = False
         self.frame_data = None
         
-    def read(self) -> Tuple[int, int, Dict, Optional[np.ndarray]]:
+    def read(self) -> Tuple:
         raise NotImplementedError("The read method must be implemented in subclasses")
     
     def is_finished(self) -> bool:
@@ -28,5 +28,7 @@ class OfflineReader(BaseReader):
         log.info("Closing offline reader")
         pass
 
-
-
+    @property
+    def total_num_frames(self) -> int:
+        """Returns the total number of frames in the dataset."""
+        raise NotImplementedError("Subclasses must implement num_frames property")

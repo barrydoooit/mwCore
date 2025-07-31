@@ -148,6 +148,7 @@ class MRIDatasetConverter:
             J = sk.shape[2]
             sk = sk.transpose(0,2,1)
             sk[:, :, [1, 2]] = sk[:, :, [2, 1]]  # swap y and z so as to TI coordinate
+            sk[:, :, 0] = -sk[:, :, 0]  # flip x to TI coordinate
             sk = sk.reshape(n_frames, -1)  # (n,3*J)
             skel_cols = [f'joint{j}_{ax}' for j in range(J) for ax in ('x','y','z')]
             # radar

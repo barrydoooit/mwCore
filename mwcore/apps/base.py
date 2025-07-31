@@ -10,15 +10,11 @@ from mmengine.registry import DefaultScope
 from mmengine.config import Config, ConfigDict
 from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
 from mwcore.radario.readers.base import SerialReader
-from mwcore.radario.readers.offline.base import OfflineReader
+from mwcore.radario.readers.offlineReaders.base import OfflineReader
 
 if TYPE_CHECKING:
-    from mwcore.radario.readers.TI.base import BaseTIBufferedReader
     from mwcore.threads.online_reader import OnlineReaderThread
     from mwcore.threads.offline_reader import OfflineReaderThread
-    from mwcore.threads.error_measurement import ErrorMeasurementThread
-    from mwcore.threads.online_tracking import OnlineTrackingThread
-    from PySide6.QtWidgets import QMainWindow
 
 from mwcore.registry import READERS, THREADS, VISUALIZERS, APPS
 

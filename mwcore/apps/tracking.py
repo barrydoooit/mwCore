@@ -6,21 +6,14 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from mwcore.apps.base import ConfigType
-from mwcore.radario.readers.base import SerialReader
-from mwcore.radario.readers.offline.base import OfflineReader
+from mwcore.threads.evaluator_thread import EvaluationWorker
 
 
 from . import BaseMWOnlineApp
 from mwcore.visualization.visualizers.online_tracking import OnlineTrackingVisualizer
 
 if TYPE_CHECKING:
-    from mwcore.radario.readers.TI.base import BaseTIBufferedReader
-    from mwcore.threads.online_reader import OnlineReaderThread
-    from mwcore.threads.offline_reader import OfflineReaderThread
-    from mwcore.threads.error_measurement import ErrorMeasurementThread
     from mwcore.threads.online_tracking import OnlineTrackingThread
-    from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
-    from PySide6.QtWidgets import QMainWindow
 
 from mwcore.registry import READERS, THREADS, VISUALIZERS, APPS
 
@@ -32,38 +25,29 @@ class TrackingApp(BaseMWOnlineApp):
                  reader_cfg: dict,
                  tracker_cfg: dict,
                  vis_cfg: Optional[dict] = None,
-                 error_cfg: Optional[dict] = None,
+                 evaluators: Optional[list] = None,
                  cfg: Optional[ConfigType] = None):
         super().__init__(reader_cfg, vis_cfg, cfg)
         self.tracker_cfg = deepcopy(tracker_cfg)
-        self.error_cfg = deepcopy(error_cfg) if error_cfg is not None else None
-        
+        self.evaluator_worker, self.evaluator_thread = EvaluationWorker.build_with_thread(evaluators) if evaluators else (None, None)
+
     @property
     def tracker_thread(self) -> 'OnlineTrackingThread':
         if not hasattr(self, '_tracker_thread'):
             self._tracker_thread = THREADS.build(dict(
                 type="OnlineTrackingThread",
-                tracker=self.tracker_cfg
+                tracker=self.tracker_cfg,
+                use_framedata=True
             ))
         return self._tracker_thread
 
-    @property
-    def error_thread(self) -> 'ErrorMeasurementThread':
-        if self.error_cfg is None:
-            return None
-        if not hasattr(self, '_error_thread'):
-            self._error_thread = THREADS.build(dict(
-                type="ErrorMeasurementThread",
-                tracker_name=self.tracker_cfg.get("type", "default_experiment"),
-                dataset_name=self.reader_cfg.get("type", "default_dataset") +
-                             self.reader_cfg.get("data", "default_dataset").replace("data", "").replace("/", "_").replace("?", ""),
-                error_cfg=self.error_cfg
-            ))
-        return self._error_thread
-
     @override
     @property
-    def visualizer(self) -> OnlineTrackingVisualizer:
+    def visualizer(self) -> Optional[OnlineTrackingVisualizer]:
+        if not self.vis_cfg.get('is_on', True):
+            return None
+        else:
+            self.vis_cfg.pop('is_on', None)
         return cast(OnlineTrackingVisualizer, super().visualizer)
     
     @override
@@ -75,19 +59,21 @@ class TrackingApp(BaseMWOnlineApp):
         return viz
     
     def on_visualizer_close(self, event):
-        if self.error_thread is not None:
-            self.error_thread.requestInterruption()
-            self.error_thread.wait()
+        if self.evaluator_thread is not None:
+            self.evaluator_thread.quit()
         self.reader_thread.requestInterruption()
         self.tracker_thread.requestInterruption()
 
     def start(self):
         self.app = QApplication(sys.argv)
-        self.reader_thread.raw_data.connect(self.tracker_thread.process_frame)
-        if self.error_thread is not None:
-            self.reader_thread.ground_truth_data.connect(self.error_thread.update_ground_truth)
-            self.tracker_thread.tracking_data.connect(self.error_thread.update_tracking)
+        import signal
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        from PySide6.QtCore import QTimer
+        _signal_timer = QTimer(self.app)
+        _signal_timer.start(1000)  # check every 100 ms
+        _signal_timer.timeout.connect(lambda: None)
 
+        self.reader_thread.signal_framedata.connect(self.tracker_thread.process_frame, Qt.ConnectionType.QueuedConnection)
         if self.visualizer is not None:
             self.reader_thread.array_data.connect(
                 self.visualizer.on_new_cloud, Qt.ConnectionType.QueuedConnection
@@ -97,11 +83,21 @@ class TrackingApp(BaseMWOnlineApp):
             )
             self.visualizer.show()
 
-        if self.error_thread is not None:
-            self.error_thread.start()
+        if self.evaluator_worker is not None:
+            self.tracker_thread.tracking_framedata.connect(self.evaluator_worker.process_framedata, Qt.ConnectionType.QueuedConnection)
+            self.reader_thread.signal_finished.connect(self.evaluator_worker.update_final_frame_number, Qt.ConnectionType.QueuedConnection)
+            self.evaluator_worker.signal_evaluation_complete.connect(self.app.quit)
+            self.evaluator_thread.start()
+        else:
+            self.reader_thread.signal_finished.connect(lambda x: self.app.quit())
+        
         self.reader_thread.start()
         self.tracker_thread.start()
-        sys.exit(self.app.exec())
+        try:
+            sys.exit(self.app.exec())
+        except KeyboardInterrupt:
+            print("Interrupted by user, shutting down…")
+            sys.exit(0)
 
     @classmethod
     def from_cfg(cls, cfg):
@@ -109,6 +105,6 @@ class TrackingApp(BaseMWOnlineApp):
             reader_cfg=cfg.get("reader_cfg"),
             tracker_cfg=cfg.get("tracker_cfg"),
             vis_cfg=cfg.get("vis_cfg", None),
-            error_cfg=cfg.get("error_cfg", None),
+            evaluators=cfg.get("evaluators", None),
             cfg=cfg
         )

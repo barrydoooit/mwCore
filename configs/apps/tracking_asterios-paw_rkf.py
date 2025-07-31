@@ -1,7 +1,7 @@
 _base_ = [
     '../__base__/default_runtime.py',
     './trackers/rkf.py',
-    './datasets/mRI_walking.py',
+    './datasets/asterios_paw.py',
 ]
 type = 'TrackingApp'
 vis=False # Set to True to enable visualization
@@ -18,9 +18,9 @@ vis_cfg = dict(
 evaluators = [
     dict(
         type='SkelPositionalErrorEvaluator',
-        keypoints_involved=[11, 12, 5, 6], # HipLeft, HipRight, Left shoulder, Right shoulder
+        keypoints_involved=[0], # Spine Base, Left shoulder, Right shoulder
         model_name='RKF',
-        dataset_name='mRI-walking',
+        dataset_name='asterios-paw',
         out_path='exp_data/tracking/positional_error/',
     )
 ]

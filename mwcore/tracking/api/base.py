@@ -1,6 +1,6 @@
 from copy import deepcopy
 import math
-from typing import List, Optional, Protocol
+from typing import Any, List, Optional, Protocol
 import numpy as np
 
 from mwcore.utils.tranforms import dev2standard
@@ -9,7 +9,7 @@ from mwcore.utils.tranforms import dev2standard
 
 class TrackingFunctionality(Protocol):
     """Protocol for tracking functionality."""
-    def consume(self, pcd_data_dict: dict, point_array: np.ndarray ) -> List[np.ndarray]: ...
+    def consume(self, det_obj: Any, point_array: np.ndarray ) -> List[np.ndarray]: ...
     
 
 class BaseTracker(TrackingFunctionality):

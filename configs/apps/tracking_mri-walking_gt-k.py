@@ -1,6 +1,6 @@
 _base_ = [
     '../__base__/default_runtime.py',
-    './trackers/rkf.py',
+    './trackers/gtrack_k.py',
     './datasets/mRI_walking.py',
 ]
 type = 'TrackingApp'
@@ -19,7 +19,7 @@ evaluators = [
     dict(
         type='SkelPositionalErrorEvaluator',
         keypoints_involved=[11, 12, 5, 6], # HipLeft, HipRight, Left shoulder, Right shoulder
-        model_name='RKF',
+        model_name='GT-K',
         dataset_name='mRI-walking',
         out_path='exp_data/tracking/positional_error/',
     )

@@ -2,11 +2,13 @@ from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 from mwcore.datasets.utils import pseudo_collate
-from mwcore.radario.readers.offline.base import OfflineReader
+from .base import OfflineReader
+from mwcore.radario.readers.offlineReaders.framedata import FrameData
 from mwcore.registry import DATASETS, READERS
 import torch
 from torch.utils.data import DataLoader
 import logging
+
 log = logging.getLogger(__name__)
 
 
@@ -17,16 +19,6 @@ class PoseEstim3DDatasetReader(OfflineReader):
     
     def __init__(self, dataloader: Union[DataLoader, dict]):
         super().__init__()
-        # self.read_buffer_size = 100
-
-        # self.mmwave_path = os.path.join(root_dir, "dataset_release", "aligned_data", "radar","singleframe", f"subject{self.path}.csv")
-        # self.gt_path = os.path.join(root_dir, "dataset_release", "aligned_data", "pose_labels", f"subject{self.path}_all_labels.cpl")
-        
-        # self.frame_count = 0
-        # self.last_read = None
-        # self.last_frame = None
-        # self.pointer = [0, 1]
-        # self.read_next_frames()
         if isinstance(dataloader, DataLoader):
             self.dataloader = dataloader
         elif isinstance(dataloader, dict):
@@ -48,8 +40,12 @@ class PoseEstim3DDatasetReader(OfflineReader):
             **dataloader_cfg
         )
         return dataloader
-        
-    def read(self) -> Tuple[int, int, Dict, Optional[np.ndarray]]:
+    
+    @property
+    def total_num_frames(self) -> int:
+        return len(self.dataloader)
+    
+    def read(self) -> Tuple[int, int, Dict, Optional[np.ndarray], FrameData]:
         """
         Read a frame from the MIR offline data
         
@@ -96,4 +92,4 @@ class PoseEstim3DDatasetReader(OfflineReader):
         else:
             gt = None
 
-        return 1, frm_idx, det_obj, gt
+        return 1, frm_idx, det_obj, gt, FrameData(frm_idx, det_obj, gt, None)

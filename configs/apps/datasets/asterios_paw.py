@@ -6,13 +6,14 @@ pipeline = [
         backup_frames=0,
         empty_frame_op='error',
     ),
+    # NOTE: Some coordinate transform might be needed. Using the preprocessing tools under mwcore.datasets.transforms
 ]
-data_root = './data/mri'
+data_root = './data/paw'
 data_prefix = dict(
     pcd='mmwave',
     skel='skeleton',
 )
-info_file = 'info_all.pkl'
+info_file = 'info_val.pkl'
 dataloader = dict(
     batch_size=1,
     num_workers=1,
