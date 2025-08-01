@@ -1,7 +1,7 @@
 tracker_cfg = dict(
     keep_radial = True,
     do_dev2standard = False,
-    result_in_polar = True,
+    result_in_polar = False,
     type = "RKFTracker",
     tracker_params = dict(
         KF_R_STD=0.1,

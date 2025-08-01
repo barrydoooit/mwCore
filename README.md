@@ -1,11 +1,21 @@
-## Run online tracking with visualization
+## Prepare Dataset
+mRI-Walking:
+```sh
+python tools/create_data.py mri --root-path /parent/of/dataset_release/folder --out-dir data/mri
+```
+Asterios-PAW:
+```sh
+python tools/create_data.py paw --root-path /parent/of/kinect/folder --out-dir data/paw
+```
+
+## Run online reading with visualization
 ```sh
 python tools/run_app.py configs/apps/read_and_vis.py
 ```
 
-## Run offline tracking with visualization
+## Run offline tracking (optional visualization)
 ```sh
-python tools/run_app.py configs/apps/offline_experiment.py
+python tools/run_app.py configs/apps/tracking_mri-walking_rkf.py
 ```
 
 ## Tracking details

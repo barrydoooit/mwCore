@@ -1,0 +1,9 @@
+from typing import Any, Protocol
+
+
+class Evaluator(Protocol):
+    def process_sample(self, gt, pred, *args, **kwargs) -> Any: ...
+
+    def evaluate(self, *args, **kwargs) -> Any: ...
+
+    def reset(self) -> Any: ...
