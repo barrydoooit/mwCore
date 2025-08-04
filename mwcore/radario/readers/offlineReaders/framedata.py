@@ -9,4 +9,5 @@ class FrameData:
     input_data: Any
     ground_truth: Any = None
     prediction: Any = None
+    latency: float = None  # Optional latency field to store processing time
     

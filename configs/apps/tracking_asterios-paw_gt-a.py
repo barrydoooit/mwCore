@@ -22,5 +22,11 @@ evaluators = [
         model_name='GT-A',
         dataset_name='asterios-paw',
         out_path='exp_data/tracking/positional_error/',
+    ),
+    dict(
+        type='LatencyEvaluator',
+        model_name='GT-A',
+        dataset_name='asterios-paw',
+        out_path='exp_data/tracking/latency/',
     )
 ]

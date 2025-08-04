@@ -1,1 +1,2 @@
 from .positional_error import SkelPositionalErrorEvaluator
+from .latency import LatencyEvaluator

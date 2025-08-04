@@ -146,17 +146,21 @@ class GTRACK_measurementPoint_3D(Structure):
     ]
     _pack_ = 1
 
+GTRACK_STATE_VECTOR_SIZE = 9  # 6 for 2D, 9 for 3D
+GTRACK_MEASUREMENT_VECTOR_SIZE = 4  # 3 for 2D, 4 for 3D
+
 class GTRACK_targetDesc(Structure):
     _fields_ = [
         ("uid", c_uint8),
         ("tid", c_uint32),
-        ("S", c_float * 9),  # GTRACK_STATE_VECTOR_SIZE
-        ("EC", c_float * 16), # GTRACK_MEASUREMENT_VECTOR_SIZE*GTRACK_MEASUREMENT_VECTOR_SIZE
+        ("S", c_float * GTRACK_STATE_VECTOR_SIZE),
+        ("EC", c_float * (GTRACK_MEASUREMENT_VECTOR_SIZE * GTRACK_MEASUREMENT_VECTOR_SIZE)),
         ("G", c_float),
-        ("dim", c_float * 4),
-        ("uCenter", c_float * 4),
+        ("dim", c_float * GTRACK_MEASUREMENT_VECTOR_SIZE),
+        ("uCenter", c_float * GTRACK_MEASUREMENT_VECTOR_SIZE),
         ("confidenceLevel", c_float)
     ]
+
 
 class StateVector:
     def __init__(self, config):

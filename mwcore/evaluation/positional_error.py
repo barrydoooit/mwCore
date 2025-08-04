@@ -31,6 +31,7 @@ class SkelPositionalErrorEvaluator(Evaluator):
             gt = self._extract_pos_from_gt(gt)
             # print(len(pred), pred[0], gt)
             pred = pred[0][self.coords_involved] # NOTE: While tracker returns multiple objects, we only consider the first one for evaluation
+            # log.info(f"Processing sample: GT={gt}, Pred={pred}")
             error_per_axis = gt - pred # array([dx, dy])
             self._errors.append(error_per_axis)
             return error_per_axis

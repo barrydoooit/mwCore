@@ -32,11 +32,15 @@ class EvaluationWorker(QObject):
     def process_framedata(self, framedata: FrameData):
         gt = framedata.ground_truth
         pred = framedata.prediction
+        latency = getattr(framedata, 'latency', None)
         if gt is None or pred is None:
             return
-        
+
         for evaluator in self.evaluators:
-            evaluator.process_sample(gt, pred)
+            if evaluator.__class__.__name__ == "LatencyEvaluator" and latency is not None:
+                evaluator.process_sample(latency)
+            else:
+                evaluator.process_sample(gt, pred)
         
         self._last_frame_number = framedata.frame_id
         if self.final_frame_number is not None and self._last_frame_number == self.final_frame_number:
