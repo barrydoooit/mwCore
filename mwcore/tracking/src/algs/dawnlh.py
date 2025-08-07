@@ -1,21 +1,22 @@
 from functools import partial
 import numpy as np
+from filterpy.kalman import KalmanFilter
 from dataclasses import dataclass
 import math
 import time
-from filterpy.kalman import KalmanFilter
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
 
 from .gtrack import BatchedData, PointCluster, Tracker
 from .gtrack_asterios import ClusterTrack
 from ..utils import (
-    altered_EuclideanDist,
-    apply_clustering,
     RingBuffer,
 )
 from typing import List, Callable, Any
-from abc import ABC, abstractmethod
+
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,17 +30,22 @@ class ConstAccModel:
 @dataclass
 class DawnLhConfig:
     motion_model: ConstAccModel
+    FB_FRAMES_BATCH: int 
+    KF_Q_STD: float
+    minObjPoints: int = 30  # Minimum points per cluster
+    DB_EPS: float = 0.3  # Epsilon for DBSCAN
+    DBSCAN_MinPts: int = 30  # Minimum points for DBSCAN
     TR_LIFETIME_STATIC: float = 10.0
     TR_LIFETIME_DYNAMIC: float = 5.0
     TR_VEL_THRES: float = 0.1
     TR_GATE: float = 20.0
-    TR_MAX_TRACKS: int = 100
-    DB_EPS: float = 0.5
-    DB_MIN_SAMPLES_MIN: int = 3
+    TR_MAX_TRACKS: int = 2
+    DB_EPS: float = 0.3  
+    DB_MIN_SAMPLES_MIN: int = 30  
     DB_RANGE_WEIGHT: float = 1.0
     DB_Z_WEIGHT: float = 1.0
-    
-
+    KF_GROUP_DISP_EST_INIT: float = 0.1
+    KF_Q_STD: float = 1.0 
 
 ACTIVE: int = 1
 INACTIVE: int = 0
@@ -122,19 +128,6 @@ class DawnLHTrackBuffer(Tracker):
         self.effective_tracks[:] = [track for track in self.effective_tracks if track.status != INACTIVE]
 
 
-    def _add_tracks(self, new_clusters: List[np.array]) -> None:
-        """
-        Add new tracks to the buffer.
-
-        Parameters
-        ----------
-        new_clusters : list
-            List of new clusters to be added as tracks.
-        """
-        for new_cluster in new_clusters:
-            new_track = ClusterTrack(PointCluster(np.array(new_cluster), tr_vel_threshold=self.config.TR_VEL_THRES), self.config)
-            self.next_track_id += 1
-            self.effective_tracks.append(new_track)
 
     def _predict_all(self) -> None:
         """
@@ -184,7 +177,7 @@ class DawnLHTrackBuffer(Tracker):
             # Find cluster points for this detection
             cluster_points = obj_frame[obj_idx == det_idx]
             point_cluster = PointCluster(cluster_points, tr_vel_threshold=self.config.TR_VEL_THRES)
-            newTrack = ClusterTrack(point_cluster, self.config)
+            newTrack = DawnClusterTrack(point_cluster, self.config)
             newTrack.id = nextId
             newTrack.bbox = bboxes[det_idx]
             newTrack.traj_rec = [centroids[det_idx]]
@@ -200,12 +193,23 @@ class DawnLHTrackBuffer(Tracker):
         self.next_track_id = nextId
 
     def track(self, pointcloud: np.array, batch: RingBuffer, clusteringAlgorithm: str = "DBSCAN") -> None:
+        print(f"Pointcloud shape: {pointcloud.shape}")
+
         self._predict_all()
 
+        logger.info(f"Pointcloud before denoising: {pointcloud.shape}")
+        # Noise filtering
+        pointcloud = self.point_cloud_denoise(pointcloud, {
+            'dpl_thr': 0.1,  # Doppler threshold
+            'power_thr': 0.1,  # Power threshold
+            'loc_thr': [-50, 50, -50, 50, -50, 50]  # Location threshold
+        })
+        logger.info(f"Pointcloud after denoising: {pointcloud.shape}")
+
         param_det = {
-            'minObjPoints': 30,
-            'DBSCAN_epsilon': 0.3,
-            'DBSCAN_MinPts': 30
+            'minObjPoints': self.config.minObjPoints,  # They suggest a minimum of 30 points per cluster.
+            'DBSCAN_epsilon': self.config.DB_EPS,  # Epsilon for DB. They suggest 0.3
+            'DBSCAN_MinPts': self.config.DBSCAN_MinPts,  # They suggest a minimum of 30 points per cluster
         }
         centroids, bboxes, obj_frame, obj_idx, obj_features = self.getDetections(pointcloud, param_det)
 
@@ -224,13 +228,16 @@ class DawnLHTrackBuffer(Tracker):
 
 
 
-    def point_cloud_denoise(frame: np.ndarray, param: dict) -> np.ndarray:
+    def point_cloud_denoise(self, frame: np.ndarray, param: dict) -> np.ndarray:
         dpl_thr = param.get('dpl_thr', 0)
+        power_thr = param.get('power_thr', 0)
         loc_thr = param.get('loc_thr', [-50, 50, -50, 50, -50, 50])
-        # Doppler threshold (column 7, zero-based index 6)
+        # Doppler threshold (column 7)
         mask = np.abs(frame[:, 7]) > dpl_thr
+        # Power threshold (column 8, zero-based index 7)
+        mask &= frame[:, 7] > power_thr
         frame_now = frame[mask]
-        # Location threshold (columns 1,2,3 -> 0,1,2)
+        # Location threshold
         loc_mask = (
             (loc_thr[0] < frame_now[:, 0]) & (frame_now[:, 0] < loc_thr[1]) &
             (loc_thr[2] < frame_now[:, 1]) & (frame_now[:, 1] < loc_thr[3]) &
@@ -239,26 +246,44 @@ class DawnLHTrackBuffer(Tracker):
         frame_clean = frame_now[loc_mask]
         return frame_clean
 
-    def calc_centroid(points: np.ndarray, weights: np.ndarray = None) -> np.ndarray:
+    def calc_centroid(self, points: np.ndarray, weights: np.ndarray = None) -> np.ndarray:
         if weights is None or len(weights) != len(points):
             return np.mean(points, axis=0)
         return np.average(points, axis=0, weights=weights)
 
-    def get_detection_feature(frame_obj: np.ndarray) -> dict:
-        # Example: average speed (column 7), can be expanded
-        return {'average_speed': np.mean(frame_obj[:, 6])}
-
+    def get_detection_feature(self, frame_obj: np.ndarray) -> dict:
+        # Use peakval for power and power_value
+        return {
+            'average_speed': np.mean(frame_obj[:, 6]),  # doppler
+            'average_power': np.mean(frame_obj[:, 7]),  # peakval as power
+            'max_power': np.max(frame_obj[:, 7])        # peakval as power_value
+        }
+    
     def getDetections(self, frame: np.ndarray, param_det: dict):
+        logger.info(f"Starting detection with frame shape: {frame.shape}")
+    
         if frame.shape[0] < param_det['minObjPoints']:
+            logger.info(f"Not enough points ({frame.shape[0]}) for detection, minimum required: {param_det['minObjPoints']}")
             return [], [], [], [], []
+            
         # DBSCAN clustering on X,Y
         db = DBSCAN(eps=param_det['DBSCAN_epsilon'], min_samples=param_det['DBSCAN_MinPts'])
+        logger.info(f"Running DBSCAN with eps={param_det['DBSCAN_epsilon']}, min_samples={param_det['DBSCAN_MinPts']}")
+        
         idx = db.fit_predict(frame[:, [0, 1]])
+        
+        # Count non-noise points
+        non_noise_count = np.sum(idx != -1)
+        logger.info(f"DBSCAN assigned {non_noise_count}/{len(idx)} points to clusters")
+        
         # Remove noise
         obj_frame = frame[idx != -1]
         obj_idx = idx[idx != -1]
         unique_class = np.unique(obj_idx)
         class_num = len(unique_class)
+        
+        logger.info(f"Found {class_num} unique clusters")
+    
         bboxes = np.full((class_num, 6), np.nan)
         centroids = np.full((class_num, 3), np.nan)
         obj_features = []
@@ -272,6 +297,8 @@ class DawnLHTrackBuffer(Tracker):
             bboxes[i, 3:] = rect_size
             centroids[i] = rect_center
             obj_features.append(self.get_detection_feature(frame_obj))
+        logger.info(f"Detection completed with {centroids.shape[0]} centroids")
+        logger.info(f"Centroids: {centroids}")
         return centroids, bboxes, obj_frame, obj_idx, obj_features
 
     def calc_feature_cost(self, objA_feature, obj_features):
@@ -283,16 +310,143 @@ class DawnLHTrackBuffer(Tracker):
         normal_tracks = [t for t in tracks if t.state == "normal"]
         nTracks = len(normal_tracks)
         nDetections = len(centroids)
+        
+        logger.debug(f"Assignment: {nTracks} normal tracks, {nDetections} detections")
+        
+        # If there are no tracks or detections, return empty assignments
+        if nTracks == 0 or nDetections == 0:
+            logger.debug("No tracks or detections for assignment")
+            return np.zeros((0, 2), dtype=int), list(range(nTracks)), list(range(nDetections))
+        
         cost_dist = np.zeros((nTracks, nDetections))
         cost_feature = np.zeros((nTracks, nDetections))
+        
         for i, track in enumerate(normal_tracks):
-            # Assume track.kalmanFilter has a distance method
-            cost_dist[i, :] = track.kalmanFilter.distance(centroids)
-            cost_feature[i, :] = self.calc_feature_cost(track.obj_feature, obj_features)
+            try:
+                cost_dist[i, :] = track.kalmanFilter.distance(centroids)
+                cost_feature[i, :] = self.calc_feature_cost(track.obj_feature, obj_features)
+                logger.debug(f"Track {i} costs - distance: {np.mean(cost_dist[i, :]):.2f}, feature: {np.mean(cost_feature[i, :]):.2f}")
+            except Exception as e:
+                logger.error(f"Error calculating costs for track {i}: {str(e)}")
+                raise
+        
         cost = 0.6 * cost_dist + 0.4 * cost_feature
         costOfNonAssignment = 25
+        
+        logger.debug(f"Running linear_sum_assignment with cost matrix shape: {cost.shape}")
         row_ind, col_ind = linear_sum_assignment(cost)
-        assignments = np.array([[r, c] for r, c in zip(row_ind, col_ind) if cost[r, c] < costOfNonAssignment])
-        unassignedTracks = [i for i in range(nTracks) if i not in assignments[:, 0]]
-        unassignedDetections = [i for i in range(nDetections) if i not in assignments[:, 1]]
+        
+        # Filter assignments by cost threshold
+        valid_assignments = [(r, c) for r, c in zip(row_ind, col_ind) if cost[r, c] < costOfNonAssignment]
+        logger.debug(f"Found {len(valid_assignments)}/{len(row_ind)} assignments below cost threshold {costOfNonAssignment}")
+        
+        # Create a properly shaped 2D array with explicit reshape
+        if valid_assignments:
+            assignments = np.array(valid_assignments, dtype=int).reshape(-1, 2)
+        else:
+            assignments = np.zeros((0, 2), dtype=int)
+        logger.debug(f"Assignments array shape: {assignments.shape}")
+        
+        # Get assigned track/detection indices
+        if len(assignments) == 0:
+            assigned_tracks = set()
+            assigned_detections = set()
+        else:
+            assigned_tracks = set(assignments[:, 0].tolist())
+            assigned_detections = set(assignments[:, 1].tolist())
+        
+        # Get unassigned tracks and detections using the normal_tracks index mapping
+        unassignedTracks = [i for i in range(nTracks) if i not in assigned_tracks]
+        unassignedDetections = [i for i in range(nDetections) if i not in assigned_detections]
+        
+        logger.debug(f"Unassigned tracks: {len(unassignedTracks)}, Unassigned detections: {len(unassignedDetections)}")
+        
         return assignments, unassignedTracks, unassignedDetections
+    
+
+class DawnKalmanState(KalmanFilter):
+    """
+    Kalman filter state for the Dawn algorithm, simplified to match MATLAB implementation
+    """
+    def __init__(self, centroid: np.ndarray, config: DawnLhConfig) -> None:
+        self.config = config
+        self.model = config.motion_model
+        # Initialize with 6D state, 3D measurement
+        super().__init__(dim_x=self.model.KF_DIM[0], dim_z=self.model.KF_DIM[1])
+        self.F = self.model.KF_F(1)
+        self.H = self.model.KF_H
+        self.Q = self.model.KF_Q_DISCR(1)
+        # Use the KF_Q_STD from DawnLhConfig
+        self.R = np.eye(self.model.KF_DIM[1]) * config.KF_Q_STD**2
+        self.x = np.array([self.model.STATE_VEC(centroid)]).T
+        self.P = np.eye(self.model.KF_DIM[0]) * 1000  # Initial error covariance
+
+    def distance(self, centroids):
+        """Calculate the Mahalanobis distance between state and measurements"""
+        if len(centroids) == 0:
+            return np.array([])
+        
+        # Predict measurement (position only)
+        z_pred = self.H @ self.x
+        
+        # Calculate innovation covariance
+        S = self.H @ self.P @ self.H.T + self.R
+        S_inv = np.linalg.inv(S)
+        
+        # Calculate distances
+        distances = []
+        for i in range(len(centroids)):
+            # Innovation (measurement - prediction)
+            y = centroids[i] - z_pred.flatten()
+            # Mahalanobis distance
+            d = np.sqrt(y @ S_inv @ y.T)
+            distances.append(d)
+            
+        return np.array(distances)
+    
+    def correct(self, z):
+        """
+        Correct the state using a position measurement.
+        """
+        # z should already be the right dimension (3D position)
+        super().update(z)
+        
+        # Return the position components of the corrected state
+        return self.x[:3].flatten()
+
+class DawnClusterTrack:
+    """
+    A simplified track class for Dawn algorithm, compatible with DawnLhConfig
+    """
+    def __init__(self, cluster: "PointCluster", config: DawnLhConfig) -> None:
+        self.config = config
+        self.cluster = cluster
+        self.kalmanFilter = DawnKalmanState(cluster.centroid, config)
+        
+        # Track state variables
+        self.id = -1  # Will be set when added to tracker
+        self.status = ACTIVE
+        self.lifetime = 0
+        self.state = "normal"  # normal, noise, or lost
+        
+        # For visualization and history
+        self.bbox = None
+        self.traj_rec = []  # trajectory recording
+        self.bbox_rec = []  # bounding box recording
+        self.age = 0
+        self.totalVisibleCount = 0
+        self.consecutiveInvisibleCount = 0
+        self.appear_frame = 0
+        self.obj_feature = None
+        
+    def predict_state(self, dt):
+        """Predict the state using the Kalman filter"""
+        self.kalmanFilter.predict()
+        self.lifetime += 1
+        return self.kalmanFilter.x
+        
+    def update_state(self):
+        """Update the Kalman filter state"""
+        # The actual correction happens in update_assigned_tracks
+        # This is kept for compatibility with the existing code
+        pass
