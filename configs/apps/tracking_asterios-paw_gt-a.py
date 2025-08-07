@@ -22,11 +22,19 @@ evaluators = [
         model_name='GT-A',
         dataset_name='asterios-paw',
         out_path='exp_data/tracking/positional_error/',
+        mode='all',  # 'absolute', 'bias_corrected', 'displacement', or 'all'
     ),
     dict(
         type='LatencyEvaluator',
         model_name='GT-A',
         dataset_name='asterios-paw',
         out_path='exp_data/tracking/latency/',
+    ),
+    dict(
+        type='SkelJitterEvaluator',
+        keypoints_involved=[0],
+        model_name='GT-A',
+        dataset_name='asterios-paw',
+        out_path='exp_data/tracking/jitter_error/',
     )
 ]

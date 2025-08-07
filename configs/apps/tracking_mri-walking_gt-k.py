@@ -22,5 +22,19 @@ evaluators = [
         model_name='GT-K',
         dataset_name='mRI-walking',
         out_path='exp_data/tracking/positional_error/',
+        mode='all',  # 'absolute', 'bias_corrected', 'displacement', or 'all'
+    ),
+    dict(
+        type='SkelJitterEvaluator',
+        keypoints_involved=[11, 12, 5, 6],
+        model_name='GT-K',
+        dataset_name='mRI-walking',
+        out_path='exp_data/tracking/jitter_error/',
+    ),
+    dict(
+        type='LatencyEvaluator',
+        model_name='GT-K',
+        dataset_name='mRI-walking',
+        out_path='exp_data/tracking/latency/',
     )
 ]

@@ -27,12 +27,12 @@ class LatencyEvaluator(Evaluator):
     def evaluate(self, *args, **kwargs) -> dict:
         log.info(f"{self.__class__.__name__}: Evaluating latency...")
         if not self._latencies:
-            print("No latency data to evaluate.")
+            log.info("No latency data to evaluate.")
             return {}
         latency_mean = np.mean(self._latencies)
         latency_median = np.median(self._latencies)
         latency_std = np.std(self._latencies)
-        print(f"Latency (seconds): mean={latency_mean:.6f}, median={latency_median:.6f}, std={latency_std:.6f}")
+        log.info(f"Latency (ms): mean={latency_mean * 1000:.2f}, median={latency_median * 1000:.2f}, std={latency_std * 1000:.2f}")
         metrics = {
             'latency': {
                 'mean': latency_mean,

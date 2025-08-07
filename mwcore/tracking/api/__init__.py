@@ -3,11 +3,13 @@ from .trackers.gtrack import GTrackTracker
 from .trackers.recursive_kf import RKFTracker
 from .trackers.gtrack_kaloyan import GTrackKTracker
 from .trackers.gtrack_c_impl import GTrackCTracker
+from .trackers.dawnlh_tracker import DawnLHTracker
 
 __all__ = [
     'GTrackATracker',
     'GTrackTracker',
     'RKFTracker',
     'GTrackKTracker',
-    'GTrackCTracker'
+    'GTrackCTracker',
+    'DawnLHTracker'
 ]
