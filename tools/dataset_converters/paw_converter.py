@@ -80,8 +80,8 @@ class AsteriosPawDatasetConverter:
 
     @staticmethod
     def translate_skel(skel_frame: np.ndarray,
-                       X: float = 0.22,
-                       Z: float = 0.8) -> np.ndarray:
+                       X: float = 0,
+                       Z: float = 0) -> np.ndarray:
         joints = skel_frame.reshape(-1, 3).copy()
         joints += np.array([X, 0.0, Z], dtype=joints.dtype)
         joints[:, 0] *= -1
