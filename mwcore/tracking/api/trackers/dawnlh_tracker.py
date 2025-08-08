@@ -10,7 +10,7 @@ from mwcore.tracking.src.algs.gtrack import BatchedData
 from mwcore.tracking.src.algs.gtrack_asterios import  ConstAccModel
 from ..base import BaseTracker
 
-from mwcore.tracking.src.algs.dawnlh import DawnLhConfig, DawnLHTrackBuffer
+from mwcore.tracking.src.algs.dawnlh import DawnLhConfig, DawnLHTrackBuffer, KFParameters
 
 @TRACKERS.register_module()
 class DawnLHTracker(BaseTracker):
@@ -81,7 +81,7 @@ def make_config_dawnLh(raw: dict) -> DawnLhConfig:
             [0, 0, 0, 0, 0, 1],
         ])
     
-    kf_q_std = raw.get('KF_Q_STD', 1.0)
+    kf_q_std = raw.get('KF_Q_STD', 25.0)  # Changed default to match MATLAB
     
     def KF_Q_DISCR_cv(dt):
         # Q for constant velocity model
@@ -95,28 +95,53 @@ def make_config_dawnLh(raw: dict) -> DawnLhConfig:
         # For 3D position + velocity
         return [init[0], init[1], init[2], 0, 0, 0]
     
+    # Define the motion model
     motion_model = ConstAccModel(
         KF_DIM=[6, 3],  # 6D state (pos+vel), 3D measurement (pos only)
         KF_H=np.array([[1, 0, 0, 0, 0, 0],
-                       [0, 1, 0, 0, 0, 0],
-                       [0, 0, 1, 0, 0, 0]]),  # Extract position only
+                      [0, 1, 0, 0, 0, 0],
+                      [0, 0, 1, 0, 0, 0]]),  # Extract position only
         KF_F=KF_F_cv,
         KF_Q_DISCR=KF_Q_DISCR_cv,
         STATE_VEC=STATE_VEC_cv,
     )
     
+    # Create KF Parameters with optional overrides from raw config
+    kf_params = KFParameters(
+        motion_model=raw.get('motion_model', "ConstantVelocity"),
+        measurement_noise=raw.get('measurement_noise', 1.0),
+        initial_estimate_error=raw.get('initial_estimate_error', None),
+        motion_noise=raw.get('motion_noise', None),
+        initial_location=raw.get('initial_location', "Same as first detection")
+    )
+    
+    # Create and return the full configuration
     return DawnLhConfig(
         motion_model=motion_model,
-        DB_EPS= raw.get('DB_EPS', 0.3),
-        DBSCAN_MinPts=raw.get('DBSCAN_MinPts', 30),  # Minimum points per cluster
-        minObjPoints=raw.get('minObjPoints', 10),  # Minimum points per cluster
-
-        TR_LIFETIME_STATIC=raw.get('TR_LIFETIME_STATIC', 30),
-        TR_LIFETIME_DYNAMIC=raw.get('TR_LIFETIME_DYNAMIC', 10),
-        TR_VEL_THRES=raw.get('TR_VEL_THRES', 0.1),
-        TR_MAX_TRACKS=raw.get('TR_MAX_TRACKS', 2),
+        kf_params=kf_params,
+        
+        # DBSCAN clustering parameters
+        DB_EPS=raw.get('DB_EPS', 0.3),
+        DBSCAN_MinPts=raw.get('DBSCAN_MinPts', 20),
+        minObjPoints=raw.get('minObjPoints', 10),
+        
+        # Point cloud filtering parameters
+        dpl_thr=raw.get('dpl_thr', 0.1),
+        power_thr=raw.get('power_thr', 0.1),
+        loc_thr=raw.get('loc_thr', [-50, 50, -50, 50, -50, 50]),
+        
+        # Track lifecycle management
+        TR_LIFETIME_STATIC=raw.get('TR_LIFETIME_STATIC', 10),
+        TR_LIFETIME_DYNAMIC=raw.get('TR_LIFETIME_DYNAMIC', 30),
+        TR_VEL_THRES=raw.get('TR_VEL_THRES', 0.05),
+        invisible_for_too_long=raw.get('invisible_for_too_long', 20),
+        age_threshold=raw.get('age_threshold', 5),
+        visibility_threshold=raw.get('visibility_threshold', 0.5),
+        
+        # Tracking parameters
         FB_FRAMES_BATCH=raw.get('FB_FRAMES_BATCH', 5),
-        DB_RANGE_WEIGHT=raw.get('DB_RANGE_WEIGHT', 1.0),
-        DB_Z_WEIGHT=raw.get('DB_Z_WEIGHT', 1.0),
-        KF_Q_STD=raw.get('KF_Q_STD', 1.0),
+        cost_of_non_assignment=raw.get('cost_of_non_assignment', 25.0),
+        assignment_dist_weight=raw.get('assignment_dist_weight', 0.6),
+        assignment_feature_weight=raw.get('assignment_feature_weight', 0.4),
+        feature_cost_multiplier=raw.get('feature_cost_multiplier', 10.0),
     )

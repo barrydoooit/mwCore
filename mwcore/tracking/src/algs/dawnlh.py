@@ -1,7 +1,7 @@
 from functools import partial
 import numpy as np
 from filterpy.kalman import KalmanFilter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import time
 from sklearn.cluster import DBSCAN
@@ -12,7 +12,7 @@ from .gtrack_asterios import ClusterTrack
 from ..utils import (
     RingBuffer,
 )
-from typing import List, Callable, Any
+from typing import List, Callable
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -28,24 +28,53 @@ class ConstAccModel:
     STATE_VEC: Callable[[np.ndarray], List[float]]  # Function to build the initial state vector
 
 @dataclass
+class KFParameters:
+    motion_model: str = "ConstantVelocity"  # 'ConstantVelocity' | 'ConstantAcceleration'
+    initial_estimate_error: List[float] = None  # Depends on motion model
+    motion_noise: List[float] = None  # Depends on motion model
+    measurement_noise: float = 25.0
+    initial_location: str = "Same as first detection"
+    
+    def __post_init__(self):
+        # Set defaults based on motion model if not provided
+        if self.initial_estimate_error is None:
+            if self.motion_model == "ConstantAcceleration":
+                self.initial_estimate_error = [1e5, 1e5, 1e5]
+                self.motion_noise = [25, 10, 1]
+            else:  # ConstantVelocity is default
+                self.initial_estimate_error = [1e5, 1e5]
+                self.motion_noise = [25, 10]
+
+@dataclass
 class DawnLhConfig:
+    # Motion model configuration
     motion_model: ConstAccModel
-    FB_FRAMES_BATCH: int 
-    KF_Q_STD: float
+    kf_params: KFParameters = field(default_factory=KFParameters)
+    
+    # Tracking parameters
+    FB_FRAMES_BATCH: int = 5
+    cost_of_non_assignment: float = 25.0  # Cost threshold for track assignments
+    assignment_dist_weight: float = 0.6  # Weight for distance cost in assignment
+    assignment_feature_weight: float = 0.4  # Weight for feature cost in assignment
+    feature_cost_multiplier: float = 10.0  # Multiplier for feature cost calculation
+    
+    # Track lifecycle management
+    invisible_for_too_long: int = 20  # Frames before track is considered lost
+    age_threshold: int = 5  # Minimum age for reliable track
+    visibility_threshold: float = 0.5  # Minimum visibility ratio for reliable track
+    TR_LIFETIME_DYNAMIC: int = 30  # Lifetime threshold for dynamic objects
+    TR_LIFETIME_STATIC: int = 10  # Lifetime threshold for static objects
+    TR_VEL_THRES: float = 0.05  # Velocity threshold for dynamic/static classification
+    
+    # DBSCAN clustering parameters
     minObjPoints: int = 30  # Minimum points per cluster
     DB_EPS: float = 0.3  # Epsilon for DBSCAN
     DBSCAN_MinPts: int = 30  # Minimum points for DBSCAN
-    TR_LIFETIME_STATIC: float = 10.0
-    TR_LIFETIME_DYNAMIC: float = 5.0
-    TR_VEL_THRES: float = 0.1
-    TR_GATE: float = 20.0
-    TR_MAX_TRACKS: int = 2
-    DB_EPS: float = 0.3  
-    DB_MIN_SAMPLES_MIN: int = 30  
-    DB_RANGE_WEIGHT: float = 1.0
-    DB_Z_WEIGHT: float = 1.0
-    KF_GROUP_DISP_EST_INIT: float = 0.1
-    KF_Q_STD: float = 1.0 
+    
+    # Point cloud filtering parameters
+    dpl_thr: float = 0.1  # Disparity/doppler threshold for point association
+    power_thr: float = 0.1  # Power threshold for filtering
+    loc_thr: List[float] = field(default_factory=lambda: [-50, 50, -50, 50, -50, 50])  # Location bounds [xmin, xmax, ymin, ymax, zmin, zmax]
 
 ACTIVE: int = 1
 INACTIVE: int = 0
@@ -89,9 +118,6 @@ class DawnLHTrackBuffer(Tracker):
     _predict_all()
         Predict the state of all effective tracks.
 
-    _update_all()
-        Update the state of all effective tracks.
-
     _get_gated_clouds(full_set)
         Gate the pointcloud and return gated and unassigned clouds.
 
@@ -106,7 +132,7 @@ class DawnLHTrackBuffer(Tracker):
 
     """
 
-    def __init__(self, config: DawnLhConfig, usePalmar: bool = False) -> None:
+    def __init__(self, config: DawnLhConfig) -> None:
         """
         Initialize TrackBuffer with empty lists for tracks and effective tracks.
         """
@@ -130,18 +156,14 @@ class DawnLHTrackBuffer(Tracker):
 
 
     def _predict_all(self) -> None:
-        """
-        Predict the state of all effective tracks.
-        """
         for track in self.effective_tracks:
-            track.predict_state(track.lifetime + self.dt)
-
-    def _update_all(self) -> None:
-        """
-        Update the state of all effective tracks.
-        """
-        for track in self.effective_tracks:
-            track.update_state()
+            if track.state == "normal":
+                predicted_centroid = track.predict_state(track.lifetime + self.dt)
+                if track.bbox is not None:
+                    # Update bounding box based on prediction
+                    bbox = track.bbox
+                    predicted_corner = predicted_centroid.flatten()[:3] - bbox[3:6] / 2
+                    track.bbox = np.concatenate([predicted_corner, bbox[3:6]])
 
     def update_assigned_tracks(self, assignments, centroids, bboxes, obj_features):
         for track_idx, det_idx in assignments:
@@ -164,9 +186,16 @@ class DawnLHTrackBuffer(Tracker):
             track.traj_rec.append([np.nan]*3)
             track.consecutiveInvisibleCount += 1
 
-    def update_track_states(self, invisibleForTooLong=20, ageThreshold=5):
+    def update_track_states(self, invisibleForTooLong=None, ageThreshold=None):
+        if invisibleForTooLong is None:
+            invisibleForTooLong = self.config.invisible_for_too_long
+        if ageThreshold is None:
+            ageThreshold = self.config.age_threshold
+            
+        visibility_threshold = self.config.visibility_threshold
+            
         for track in self.effective_tracks:
-            if track.age < ageThreshold and (track.totalVisibleCount / track.age) < 0.5:
+            if track.age < ageThreshold and (track.totalVisibleCount / track.age) < visibility_threshold:
                 track.state = "noise"
             if track.consecutiveInvisibleCount >= invisibleForTooLong:
                 track.state = "lost"
@@ -200,9 +229,9 @@ class DawnLHTrackBuffer(Tracker):
         logger.info(f"Pointcloud before denoising: {pointcloud.shape}")
         # Noise filtering
         pointcloud = self.point_cloud_denoise(pointcloud, {
-            'dpl_thr': 0.1,  # Doppler threshold
-            'power_thr': 0.1,  # Power threshold
-            'loc_thr': [-50, 50, -50, 50, -50, 50]  # Location threshold
+            'dpl_thr': self.config.dpl_thr,  # Use config value instead of 0.1
+            'power_thr': self.config.power_thr,  # Use config value instead of 0.1
+            'loc_thr': self.config.loc_thr  # Use config value instead of hardcoded array
         })
         logger.info(f"Pointcloud after denoising: {pointcloud.shape}")
 
@@ -223,7 +252,6 @@ class DawnLHTrackBuffer(Tracker):
         self.create_new_tracks(unassignedDetections, centroids, bboxes, obj_features, obj_frame, obj_idx)
 
         self._maintain_tracks()
-        self._update_all()
 
 
 
@@ -304,18 +332,18 @@ class DawnLHTrackBuffer(Tracker):
     def calc_feature_cost(self, objA_feature, obj_features):
         if not obj_features or objA_feature is None:
             return np.full(len(obj_features), np.nan)
-        return 10 * np.square(np.array([f['average_speed'] for f in obj_features]) - objA_feature['average_speed'])
+        return self.config.feature_cost_multiplier * np.square(np.array([f['average_speed'] for f in obj_features]) - objA_feature['average_speed'])
 
     def detectionToTrackAssignment(self, tracks, centroids, obj_features):
         normal_tracks = [t for t in tracks if t.state == "normal"]
         nTracks = len(normal_tracks)
         nDetections = len(centroids)
         
-        logger.debug(f"Assignment: {nTracks} normal tracks, {nDetections} detections")
+        logger.info(f"Assignment: {nTracks} normal tracks, {nDetections} detections")
         
         # If there are no tracks or detections, return empty assignments
         if nTracks == 0 or nDetections == 0:
-            logger.debug("No tracks or detections for assignment")
+            logger.info("No tracks or detections for assignment")
             return np.zeros((0, 2), dtype=int), list(range(nTracks)), list(range(nDetections))
         
         cost_dist = np.zeros((nTracks, nDetections))
@@ -325,20 +353,21 @@ class DawnLHTrackBuffer(Tracker):
             try:
                 cost_dist[i, :] = track.kalmanFilter.distance(centroids)
                 cost_feature[i, :] = self.calc_feature_cost(track.obj_feature, obj_features)
-                logger.debug(f"Track {i} costs - distance: {np.mean(cost_dist[i, :]):.2f}, feature: {np.mean(cost_feature[i, :]):.2f}")
+                logger.info(f"Track {i} costs - distance: {np.mean(cost_dist[i, :]):.2f}, feature: {np.mean(cost_feature[i, :]):.2f}")
             except Exception as e:
                 logger.error(f"Error calculating costs for track {i}: {str(e)}")
                 raise
         
-        cost = 0.6 * cost_dist + 0.4 * cost_feature
-        costOfNonAssignment = 25
+        cost = self.config.assignment_dist_weight * cost_dist + self.config.assignment_feature_weight * cost_feature
+        costOfNonAssignment = self.config.cost_of_non_assignment
+    
         
         logger.debug(f"Running linear_sum_assignment with cost matrix shape: {cost.shape}")
         row_ind, col_ind = linear_sum_assignment(cost)
         
         # Filter assignments by cost threshold
         valid_assignments = [(r, c) for r, c in zip(row_ind, col_ind) if cost[r, c] < costOfNonAssignment]
-        logger.debug(f"Found {len(valid_assignments)}/{len(row_ind)} assignments below cost threshold {costOfNonAssignment}")
+        logger.info(f"Found {len(valid_assignments)}/{len(row_ind)} assignments below cost threshold {costOfNonAssignment}")
         
         # Create a properly shaped 2D array with explicit reshape
         if valid_assignments:
@@ -359,7 +388,7 @@ class DawnLHTrackBuffer(Tracker):
         unassignedTracks = [i for i in range(nTracks) if i not in assigned_tracks]
         unassignedDetections = [i for i in range(nDetections) if i not in assigned_detections]
         
-        logger.debug(f"Unassigned tracks: {len(unassignedTracks)}, Unassigned detections: {len(unassignedDetections)}")
+        logger.info(f"Unassigned tracks: {len(unassignedTracks)}, Unassigned detections: {len(unassignedDetections)}")
         
         return assignments, unassignedTracks, unassignedDetections
     
@@ -376,10 +405,19 @@ class DawnKalmanState(KalmanFilter):
         self.F = self.model.KF_F(1)
         self.H = self.model.KF_H
         self.Q = self.model.KF_Q_DISCR(1)
-        # Use the KF_Q_STD from DawnLhConfig
-        self.R = np.eye(self.model.KF_DIM[1]) * config.KF_Q_STD**2
+        
+        # Use the measurement_noise from kf_params instead of KF_Q_STD
+        self.R = np.eye(self.model.KF_DIM[1]) * config.kf_params.measurement_noise**2
+        
+        # Use STATE_VEC from the model
         self.x = np.array([self.model.STATE_VEC(centroid)]).T
-        self.P = np.eye(self.model.KF_DIM[0]) * 1000  # Initial error covariance
+        
+        # Use initial_estimate_error from kf_params
+        if config.kf_params.initial_estimate_error:
+            # Create diagonal P matrix with appropriate dimensions
+            self.P = np.diag(config.kf_params.initial_estimate_error * (self.model.KF_DIM[0] // len(config.kf_params.initial_estimate_error)))
+        else:
+            self.P = np.eye(self.model.KF_DIM[0]) * 1000  # Fallback to default
 
     def distance(self, centroids):
         """Calculate the Mahalanobis distance between state and measurements"""
@@ -445,8 +483,3 @@ class DawnClusterTrack:
         self.lifetime += 1
         return self.kalmanFilter.x
         
-    def update_state(self):
-        """Update the Kalman filter state"""
-        # The actual correction happens in update_assigned_tracks
-        # This is kept for compatibility with the existing code
-        pass
