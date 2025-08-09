@@ -70,6 +70,11 @@ class DawnLHTracker(BaseTracker):
 
 
 def make_config_dawnLh(raw: dict) -> DawnLhConfig:
+    # Get motion noise from config
+    motion_noise = raw.get('motion_noise', [25, 15])
+    position_noise = motion_noise[0] if len(motion_noise) > 0 else 25
+    velocity_noise = motion_noise[1] if len(motion_noise) > 1 else 15
+    
     # For constant velocity model 
     def KF_F_cv(dt):
         return np.array([
@@ -81,15 +86,10 @@ def make_config_dawnLh(raw: dict) -> DawnLhConfig:
             [0, 0, 0, 0, 0, 1],
         ])
     
-    kf_q_std = raw.get('KF_Q_STD', 25.0)  # Changed default to match MATLAB
-    
     def KF_Q_DISCR_cv(dt):
-        # Q for constant velocity model
-        return block_diag(
-            Q_discrete_white_noise(2, dt, var=kf_q_std),
-            Q_discrete_white_noise(2, dt, var=kf_q_std),
-            Q_discrete_white_noise(2, dt, var=kf_q_std),
-        )
+        # Build Q matrix with separate noise for position and velocity
+        q_pos = Q_discrete_white_noise(2, dt, var=position_noise)
+        return block_diag(q_pos, q_pos, q_pos)
     
     def STATE_VEC_cv(init):
         # For 3D position + velocity
@@ -106,14 +106,15 @@ def make_config_dawnLh(raw: dict) -> DawnLhConfig:
         STATE_VEC=STATE_VEC_cv,
     )
     
-    # Create KF Parameters with optional overrides from raw config
+    # Create KF Parameters with configured values
     kf_params = KFParameters(
         motion_model=raw.get('motion_model', "ConstantVelocity"),
         measurement_noise=raw.get('measurement_noise', 1.0),
-        initial_estimate_error=raw.get('initial_estimate_error', None),
-        motion_noise=raw.get('motion_noise', None),
+        initial_estimate_error=raw.get('initial_estimate_error', [1, 1]),
+        motion_noise=motion_noise,
         initial_location=raw.get('initial_location', "Same as first detection")
     )
+
     
     # Create and return the full configuration
     return DawnLhConfig(
@@ -133,7 +134,7 @@ def make_config_dawnLh(raw: dict) -> DawnLhConfig:
         # Track lifecycle management
         TR_LIFETIME_STATIC=raw.get('TR_LIFETIME_STATIC', 10),
         TR_LIFETIME_DYNAMIC=raw.get('TR_LIFETIME_DYNAMIC', 30),
-        TR_VEL_THRES=raw.get('TR_VEL_THRES', 0.05),
+        TR_VEL_THRES=raw.get('TR_VEL_THRES', 0.1),
         invisible_for_too_long=raw.get('invisible_for_too_long', 20),
         age_threshold=raw.get('age_threshold', 5),
         visibility_threshold=raw.get('visibility_threshold', 0.5),

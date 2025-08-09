@@ -49,7 +49,7 @@ class KFParameters:
 class DawnLhConfig:
     # Motion model configuration
     motion_model: ConstAccModel
-    kf_params: KFParameters = field(default_factory=KFParameters)
+    kf_params: KFParameters = field(default_factory=lambda: KFParameters(motion_model="ConstantAcceleration"))
     
     # Tracking parameters
     FB_FRAMES_BATCH: int = 5
@@ -157,13 +157,10 @@ class DawnLHTrackBuffer(Tracker):
 
     def _predict_all(self) -> None:
         for track in self.effective_tracks:
-            if track.state == "normal":
-                predicted_centroid = track.predict_state(track.lifetime + self.dt)
-                if track.bbox is not None:
-                    # Update bounding box based on prediction
-                    bbox = track.bbox
-                    predicted_corner = predicted_centroid.flatten()[:3] - bbox[3:6] / 2
-                    track.bbox = np.concatenate([predicted_corner, bbox[3:6]])
+            # if track.state == "normal":
+                track.predict_state(self.dt) 
+            # else:
+            #     logger.info(f"Track {track.id} is not in normal state, skipping prediction.")
 
     def update_assigned_tracks(self, assignments, centroids, bboxes, obj_features):
         for track_idx, det_idx in assignments:
@@ -222,18 +219,16 @@ class DawnLHTrackBuffer(Tracker):
         self.next_track_id = nextId
 
     def track(self, pointcloud: np.array, batch: RingBuffer, clusteringAlgorithm: str = "DBSCAN") -> None:
-        print(f"Pointcloud shape: {pointcloud.shape}")
-
         self._predict_all()
 
-        logger.info(f"Pointcloud before denoising: {pointcloud.shape}")
+        logger.debug(f"Pointcloud before denoising: {pointcloud.shape}")
         # Noise filtering
         pointcloud = self.point_cloud_denoise(pointcloud, {
             'dpl_thr': self.config.dpl_thr,  # Use config value instead of 0.1
             'power_thr': self.config.power_thr,  # Use config value instead of 0.1
             'loc_thr': self.config.loc_thr  # Use config value instead of hardcoded array
         })
-        logger.info(f"Pointcloud after denoising: {pointcloud.shape}")
+        logger.debug(f"Pointcloud after denoising: {pointcloud.shape}")
 
         param_det = {
             'minObjPoints': self.config.minObjPoints,  # They suggest a minimum of 30 points per cluster.
@@ -288,21 +283,21 @@ class DawnLHTrackBuffer(Tracker):
         }
     
     def getDetections(self, frame: np.ndarray, param_det: dict):
-        logger.info(f"Starting detection with frame shape: {frame.shape}")
+        logger.debug(f"Starting detection with frame shape: {frame.shape}")
     
         if frame.shape[0] < param_det['minObjPoints']:
-            logger.info(f"Not enough points ({frame.shape[0]}) for detection, minimum required: {param_det['minObjPoints']}")
+            logger.debug(f"Not enough points ({frame.shape[0]}) for detection, minimum required: {param_det['minObjPoints']}")
             return [], [], [], [], []
             
         # DBSCAN clustering on X,Y
         db = DBSCAN(eps=param_det['DBSCAN_epsilon'], min_samples=param_det['DBSCAN_MinPts'])
-        logger.info(f"Running DBSCAN with eps={param_det['DBSCAN_epsilon']}, min_samples={param_det['DBSCAN_MinPts']}")
+        logger.debug(f"Running DBSCAN with eps={param_det['DBSCAN_epsilon']}, min_samples={param_det['DBSCAN_MinPts']}")
         
         idx = db.fit_predict(frame[:, [0, 1]])
         
         # Count non-noise points
         non_noise_count = np.sum(idx != -1)
-        logger.info(f"DBSCAN assigned {non_noise_count}/{len(idx)} points to clusters")
+        logger.debug(f"DBSCAN assigned {non_noise_count}/{len(idx)} points to clusters")
         
         # Remove noise
         obj_frame = frame[idx != -1]
@@ -310,7 +305,7 @@ class DawnLHTrackBuffer(Tracker):
         unique_class = np.unique(obj_idx)
         class_num = len(unique_class)
         
-        logger.info(f"Found {class_num} unique clusters")
+        logger.debug(f"Found {class_num} unique clusters")
     
         bboxes = np.full((class_num, 6), np.nan)
         centroids = np.full((class_num, 3), np.nan)
@@ -325,8 +320,8 @@ class DawnLHTrackBuffer(Tracker):
             bboxes[i, 3:] = rect_size
             centroids[i] = rect_center
             obj_features.append(self.get_detection_feature(frame_obj))
-        logger.info(f"Detection completed with {centroids.shape[0]} centroids")
-        logger.info(f"Centroids: {centroids}")
+        logger.debug(f"Detection completed with {centroids.shape[0]} centroids")
+        logger.debug(f"Centroids: {centroids}")
         return centroids, bboxes, obj_frame, obj_idx, obj_features
 
     def calc_feature_cost(self, objA_feature, obj_features):
@@ -338,12 +333,12 @@ class DawnLHTrackBuffer(Tracker):
         normal_tracks = [t for t in tracks if t.state == "normal"]
         nTracks = len(normal_tracks)
         nDetections = len(centroids)
-        
-        logger.info(f"Assignment: {nTracks} normal tracks, {nDetections} detections")
-        
+
+        logger.debug(f"Assignment: {nTracks} normal tracks, {nDetections} detections")
+
         # If there are no tracks or detections, return empty assignments
         if nTracks == 0 or nDetections == 0:
-            logger.info("No tracks or detections for assignment")
+            logger.debug("No tracks or detections for assignment")
             return np.zeros((0, 2), dtype=int), list(range(nTracks)), list(range(nDetections))
         
         cost_dist = np.zeros((nTracks, nDetections))
@@ -353,7 +348,7 @@ class DawnLHTrackBuffer(Tracker):
             try:
                 cost_dist[i, :] = track.kalmanFilter.distance(centroids)
                 cost_feature[i, :] = self.calc_feature_cost(track.obj_feature, obj_features)
-                logger.info(f"Track {i} costs - distance: {np.mean(cost_dist[i, :]):.2f}, feature: {np.mean(cost_feature[i, :]):.2f}")
+                logger.debug(f"Track {i} costs - distance: {np.mean(cost_dist[i, :]):.2f}, feature: {np.mean(cost_feature[i, :]):.2f}")
             except Exception as e:
                 logger.error(f"Error calculating costs for track {i}: {str(e)}")
                 raise
@@ -367,7 +362,7 @@ class DawnLHTrackBuffer(Tracker):
         
         # Filter assignments by cost threshold
         valid_assignments = [(r, c) for r, c in zip(row_ind, col_ind) if cost[r, c] < costOfNonAssignment]
-        logger.info(f"Found {len(valid_assignments)}/{len(row_ind)} assignments below cost threshold {costOfNonAssignment}")
+        logger.debug(f"Found {len(valid_assignments)}/{len(row_ind)} assignments below cost threshold {costOfNonAssignment}")
         
         # Create a properly shaped 2D array with explicit reshape
         if valid_assignments:
@@ -388,7 +383,7 @@ class DawnLHTrackBuffer(Tracker):
         unassignedTracks = [i for i in range(nTracks) if i not in assigned_tracks]
         unassignedDetections = [i for i in range(nDetections) if i not in assigned_detections]
         
-        logger.info(f"Unassigned tracks: {len(unassignedTracks)}, Unassigned detections: {len(unassignedDetections)}")
+        logger.debug(f"Unassigned tracks: {len(unassignedTracks)}, Unassigned detections: {len(unassignedDetections)}")
         
         return assignments, unassignedTracks, unassignedDetections
     
@@ -405,11 +400,7 @@ class DawnKalmanState(KalmanFilter):
         self.F = self.model.KF_F(1)
         self.H = self.model.KF_H
         self.Q = self.model.KF_Q_DISCR(1)
-        
-        # Use the measurement_noise from kf_params instead of KF_Q_STD
         self.R = np.eye(self.model.KF_DIM[1]) * config.kf_params.measurement_noise**2
-        
-        # Use STATE_VEC from the model
         self.x = np.array([self.model.STATE_VEC(centroid)]).T
         
         # Use initial_estimate_error from kf_params
@@ -479,7 +470,9 @@ class DawnClusterTrack:
         
     def predict_state(self, dt):
         """Predict the state using the Kalman filter"""
+        if dt > 0 and dt < 100:  # Bounds check to prevent overflow, just in case
+            self.kalmanFilter.F = self.config.motion_model.KF_F(dt)
+            self.kalmanFilter.Q = self.config.motion_model.KF_Q_DISCR(dt)
         self.kalmanFilter.predict()
-        self.lifetime += 1
+        self.lifetime +=1  
         return self.kalmanFilter.x
-        
