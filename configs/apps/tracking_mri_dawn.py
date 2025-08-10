@@ -1,7 +1,7 @@
 _base_ = [
     '../__base__/default_runtime.py',
     './trackers/dawnlh.py',
-    './datasets/mri.py',
+    './datasets/mRI_walking.py',
 ]
 type = 'TrackingApp'
 vis=True # Set to True to enable visualization
