@@ -36,31 +36,31 @@ class SkelJitterEvaluator(Evaluator):
             log.error(f"Error processing sample. Skipped.")
 
     def evaluate(self, *args, **kwargs):
-        log.info(f"{self.__class__.__name__}: Evaluating jitter (acceleration)...")
+        log.info(f"{self.__class__.__name__}: Evaluating jitter (jerk)...")
         gt_positions = np.array(self._gt_positions)
         pred_positions = np.array(self._pred_positions)
-        if len(gt_positions) < 3 or len(pred_positions) < 3:
-            log.warning("Not enough samples to compute acceleration.")
+        if len(gt_positions) < 4 or len(pred_positions) < 4:
+            log.warning("Not enough samples to compute jerk.")
             return None
-        # Compute acceleration for GT and prediction
-        gt_acc = np.diff(np.diff(gt_positions, axis=0), axis=0)
-        pred_acc = np.diff(np.diff(pred_positions, axis=0), axis=0)
-        gt_acc_norm = np.linalg.norm(gt_acc, axis=1)
-        pred_acc_norm = np.linalg.norm(pred_acc, axis=1)
-        # Compare acceleration norms
-        acc_error = pred_acc_norm - gt_acc_norm
-        mean = np.mean(pred_acc_norm)
-        median = np.median(pred_acc_norm)
-        std = np.std(pred_acc_norm)
-        print(f"Jitter (acceleration). Mean: {mean:.4f}, Median: {median:.4f}, Std: {std:.4f}")
-        print(f"Expected Jitter (acceleration) from GT: {np.mean(gt_acc_norm):.4f}, Median: {np.median(gt_acc_norm):.4f}, Std: {np.std(gt_acc_norm):.4f}")
+        # Compute jerk for GT and prediction
+        gt_jerk = np.diff(np.diff(np.diff(gt_positions, axis=0), axis=0), axis=0)
+        pred_jerk = np.diff(np.diff(np.diff(pred_positions, axis=0), axis=0), axis=0)
+        gt_jerk_norm = np.linalg.norm(gt_jerk, axis=1)
+        pred_jerk_norm = np.linalg.norm(pred_jerk, axis=1)
+        # Compare jerk norms
+        jerk_error = pred_jerk_norm - gt_jerk_norm
+        mean = np.mean(pred_jerk_norm)
+        median = np.median(pred_jerk_norm)
+        std = np.std(pred_jerk_norm)
+        print(f"Jitter (jerk). Mean: {mean:.4f}, Median: {median:.4f}, Std: {std:.4f}")
+        print(f"Expected Jitter (jerk) from GT: {np.mean(gt_jerk_norm):.4f}, Median: {np.median(gt_jerk_norm):.4f}, Std: {np.std(gt_jerk_norm):.4f}")
         metrics = {'mean': mean, 'median': median, 'std': std}
         if self.out_path is not None:
             if self.out_path.is_dir() or self.out_path.suffix != '.npy':
                 self.out_path = self.out_path / f"{self.model_name}_{self.dataset_name}_jitter.npy"
             if not self.out_path.parent.exists():
                 self.out_path.parent.mkdir(parents=True, exist_ok=True)
-            np.save(self.out_path, acc_error)
+            np.save(self.out_path, jerk_error)
             log.info(f"Saved jitter metrics to {self.out_path}")
         return metrics
 

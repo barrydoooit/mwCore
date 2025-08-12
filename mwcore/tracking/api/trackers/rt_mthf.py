@@ -12,8 +12,7 @@ from mwcore.tracking.src.algs.gtrack import BatchedData
 from mwcore.tracking.src.algs.gtrack_asterios import  ConstAccModel
 from ..base import BaseTracker
 
-from mwcore.tracking.src.algs.rt_mthf import DawnLhConfig, DawnLHTrackBuffer, KFParameters
-
+from mwcore.tracking.src.algs.rt_mthf import RT_MTFHTrackBuffer, RT_MTFHConfig
 @TRACKERS.register_module()
 class RT_MTFHTracker(BaseTracker):
     def __init__(self, 
@@ -25,7 +24,7 @@ class RT_MTFHTracker(BaseTracker):
         self.keep_radial = keep_radial
         self.config = make_config_rt_mthf(tracker_params)
         self.do_dev2standard = do_dev2standard
-        self.tracker = DawnLHTrackBuffer(self.config)
+        self.tracker = RT_MTFHTrackBuffer(self.config)
         self.batch = BatchedData(self.config.FB_FRAMES_BATCH+1, np.empty((0, 11 if self.keep_radial else 8)))
         self.last_time = time.time()
         
@@ -41,35 +40,51 @@ class RT_MTFHTracker(BaseTracker):
         self.tracker.dt = dt
         if effective_data.shape[0] > 0:
             self.tracker.track(effective_data, self.batch)
-        # locations = [track.cluster.centroid[:3] for track in self.tracker.effective_tracks]
-        states = [track.kalmanFilter.x.flatten()[:3] for track in self.tracker.effective_tracks]
-        # print(f"These are the current states: {states}")
-        if sort_metric is not None:
-            sorted_indices = self.sort_results(metric=sort_metric, **kwargs)
-            # locations = [locations[i] for i in sorted_indices]
-            states = [states[i] for i in sorted_indices]
+        states = [track.last_position for track in self.tracker.effective_tracks if track.last_position is not None]
+        
+        # if sort_metric is not None:
+            # sorted_indices = self.sort_results(metric=sort_metric, **kwargs)
+            # states = [states[i] for i in sorted_indices]
         return states
 
+
     def sort_results(self, metric: Literal['size', 'snr', 'rel'] = 'size', **kwargs) -> np.ndarray:
-        clusters = [track.cluster for track in self.tracker.effective_tracks]
+        # Since RT-MTHF doesn't use cluster objects like the original, we need to adapt this. TODO
+        tracks = self.tracker.effective_tracks
+        
         if metric == 'size':
-            cluster_sizes = [c.point_num for c in clusters]
-            sorted_indices = np.argsort(cluster_sizes)[::-1]
+            track_ages = [track.age for track in tracks]
+            sorted_indices = np.argsort(track_ages)[::-1]
             return sorted_indices
         
         if metric == 'snr':
-            snr_values = [c.pointcloud[:, 7].mean() for c in clusters]
-            sorted_indices = np.argsort(snr_values)[::-1]
-            return sorted_indices
+            return np.arange(len(tracks))
                     
         if metric == 'rel':
             anchor = kwargs.get('anchor')
             if anchor is None:
                 raise ValueError("The 'anchor' point must be provided for 'rel' sorting.")
-            rel_distances = [np.linalg.norm(c.centroid[:3] - anchor) for c in clusters]
+            rel_distances = [np.linalg.norm(track.last_position - anchor) for track in tracks if track.last_position is not None]
             sorted_indices = np.argsort(rel_distances)
             return sorted_indices
-
-
-def make_config_rt_mthf(raw: dict) -> DawnLhConfig:
-    pass
+        
+def make_config_rt_mthf(raw: dict) -> RT_MTFHConfig:
+    """
+    Create RT_MTFHConfig from raw dictionary parameters
+    """
+    return RT_MTFHConfig(
+        FB_FRAMES_BATCH=raw.get('FB_FRAMES_BATCH', 5),
+        # Boundary filtering parameters
+        global_xlim=tuple(raw.get('global_xlim', (-5.0, 5.0))),
+        global_ylim=tuple(raw.get('global_ylim', (0.0, 10.0))),
+        global_zlim=tuple(raw.get('global_zlim', (-2.0, 2.0))),
+        # Speed filtering
+        es_threshold=raw.get('es_threshold', 0.5),
+        # Tracking parameters
+        obj_bin_number=raw.get('obj_bin_number', 10),
+        poss_clus_deque_length=raw.get('poss_clus_deque_length', 3),
+        redundant_clus_remove_cp_dis=raw.get('redundant_clus_remove_cp_dis', 0.5),
+        # DBSCAN parameters
+        dbscan_eps=raw.get('dbscan_eps', 0.5),
+        dbscan_min_samples=raw.get('dbscan_min_samples', 3)
+    )
