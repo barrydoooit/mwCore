@@ -11,7 +11,8 @@ errors/
 *.egg-info
 /build
 /data
-/src/tracking/gtrack
+/mwcore/tracking/src/algs/gtrack_c/*
+!mwcore/tracking/src/algs/gtrack_c/my_makefile
 /error_stats
 gtrack_debug.log
 exp_data

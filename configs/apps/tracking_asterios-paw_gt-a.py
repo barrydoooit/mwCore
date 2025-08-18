@@ -1,10 +1,10 @@
 _base_ = [
     '../__base__/default_runtime.py',
-    './trackers/gtrack_k.py',
-    './datasets/mRI_walking.py',
+    './trackers/gtrack_a.py',
+    './datasets/asterios_paw.py',
 ]
 type = 'TrackingApp'
-vis=False # Set to True to enable visualization
+vis=True # Set to True to enable visualization
 reader_cfg=dict(
     type='PoseEstim3DDatasetReader',
     playback_speed=2.0 if vis else None,
@@ -18,23 +18,23 @@ vis_cfg = dict(
 evaluators = [
     dict(
         type='SkelPositionalErrorEvaluator',
-        keypoints_involved=[11, 12, 5, 6], # HipLeft, HipRight, Left shoulder, Right shoulder
-        model_name='GT-K',
-        dataset_name='mRI-walking',
+        keypoints_involved=[0], # Spine Base, Left shoulder, Right shoulder
+        model_name='GT-A',
+        dataset_name='asterios-paw',
         out_path='exp_data/tracking/positional_error/',
         mode='all',  # 'absolute', 'bias_corrected', 'displacement', or 'all'
     ),
     dict(
-        type='SkelJitterEvaluator',
-        keypoints_involved=[11, 12, 5, 6],
-        model_name='GT-K',
-        dataset_name='mRI-walking',
-        out_path='exp_data/tracking/jitter_error/',
+        type='LatencyEvaluator',
+        model_name='GT-A',
+        dataset_name='asterios-paw',
+        out_path='exp_data/tracking/latency/',
     ),
     dict(
-        type='LatencyEvaluator',
-        model_name='GT-K',
-        dataset_name='mRI-walking',
-        out_path='exp_data/tracking/latency/',
+        type='SkelJitterEvaluator',
+        keypoints_involved=[0],
+        model_name='GT-A',
+        dataset_name='asterios-paw',
+        out_path='exp_data/tracking/jitter_error/',
     )
 ]

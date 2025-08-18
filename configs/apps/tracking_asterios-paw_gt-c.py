@@ -1,13 +1,13 @@
 _base_ = [
     '../__base__/default_runtime.py',
-    './trackers/rkf.py',
+    './trackers/gtrack_c.py',
     './datasets/asterios_paw.py',
 ]
 type = 'TrackingApp'
-vis=False # Set to True to enable visualization
+vis=True # Set to True to enable visualization
 reader_cfg=dict(
     type='PoseEstim3DDatasetReader',
-    playback_speed=2.0 if vis else None,
+    playback_speed=2 if vis else None,
 )
 vis_cfg = dict(
     type='OnlineTrackingVisualizer',
@@ -19,22 +19,15 @@ evaluators = [
     dict(
         type='SkelPositionalErrorEvaluator',
         keypoints_involved=[0], # Spine Base, Left shoulder, Right shoulder
-        model_name='RKF',
+        model_name='GT-C',
         dataset_name='asterios-paw',
+        coords_involved=[0,1,2],
         out_path='exp_data/tracking/positional_error/',
-        mode='all',  # 'absolute', 'bias_corrected', 'displacement', or 'all'
     ),
     dict(
         type='LatencyEvaluator',
-        model_name='RKF',
+        model_name='GT-C',
         dataset_name='asterios-paw',
         out_path='exp_data/tracking/latency/',
-    ),
-    dict(
-        type='SkelJitterEvaluator',
-        keypoints_involved=[0],
-        model_name='RKF',
-        dataset_name='asterios-paw',
-        out_path='exp_data/tracking/jitter_error/',
     )
 ]

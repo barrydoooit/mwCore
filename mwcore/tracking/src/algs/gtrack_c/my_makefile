@@ -1,0 +1,45 @@
+# GTRACK DLL Makefile with complete memory support
+MMWAVE_SDK_INSTALL_PATH ?= C:/ti/mmwave_sdk_03_06_02_00-LTS
+
+CC := gcc
+CFLAGS := -fPIC \
+          -I. \
+          -Iinclude \
+          -I$(MMWAVE_SDK_INSTALL_PATH)/packages \
+          -I$(MMWAVE_SDK_INSTALL_PATH)/packages/ti/drivers/osal \
+          -DWINDOWS_DLL \
+          -std=c99 \
+          -Dbool=uint8_t \
+          -D_Bool=uint8_t \
+		  -DGTRACK_LOG_ENABLED \
+		  -DDEBUG \
+		  -DGTRACK_3D
+# MemoryP library detection
+MEMORY_LIB_PATH := $(wildcard $(MMWAVE_SDK_INSTALL_PATH)/packages/ti/drivers/osal/libMemoryP.a)
+ifneq ($(MEMORY_LIB_PATH),)
+    LDFLAGS := -shared -Wl,--export-all-symbols -L$(dir $(MEMORY_LIB_PATH)) -lMemoryP -lkernel32  
+    CFLAGS += -DHAVE_MEMORYP
+    $(info [INFO] Using TI MemoryP library)
+else
+    LDFLAGS := -shared -Wl,--export-all-symbols
+    $(warning [WARNING] Using fallback memory functions)
+endif
+
+SRCS := $(wildcard src/*.c) \
+        test/common/gtrackAlloc.c \
+        test/common/gtrackLog.c
+OBJS := $(subst /,\,$(SRCS:.c=.o))
+
+all: gtrack.dll
+
+gtrack.dll: $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^
+	@echo [SUCCESS] Built $@
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	@rm -f $(OBJS) gtrack.dll
+
+.PHONY: all clean
