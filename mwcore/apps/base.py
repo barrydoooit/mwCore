@@ -28,7 +28,7 @@ class BaseMWApp:
         self.cfg = deepcopy(cfg) if cfg is not None else {}
         
         self._timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime(time.time()))
-        experiment_name = cfg.get('experiment_name', None)
+        experiment_name = self.cfg.get('experiment_name', None)
         if experiment_name is not None:
             self._experiment_name = f'{experiment_name}_{self._timestamp}'
         elif self.cfg.filename is not None:
@@ -41,8 +41,6 @@ class BaseMWApp:
             self.default_scope = DefaultScope.get_instance(  # type: ignore
                 self._experiment_name,
                 scope_name=cfg['default_scope'])
-        else:
-            self.default_scope = DefaultScope.get_instance(self._experiment_name)
         
     @classmethod
     def from_cfg(cls, cfg: dict):

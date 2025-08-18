@@ -4,7 +4,7 @@ _base_ = [
     './datasets/asterios_paw.py',
 ]
 type = 'TrackingApp'
-vis=True # Set to True to enable visualization
+vis=False # Set to True to enable visualization
 reader_cfg=dict(
     type='PoseEstim3DDatasetReader',
     playback_speed=2.0 if vis else None,
