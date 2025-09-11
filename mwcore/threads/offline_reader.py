@@ -32,10 +32,12 @@ class OfflineReaderThread(QThread):
         self.playback_speed = playback_speed
         self._last_frame_number: int = -1
 
+        if self.playback_speed is None:
+            if hasattr(self.reader, 'frame_rate'):
+                self.playback_speed = 1.0
+
     @property
     def sleep_time(self):
-        if self.playback_speed is None:
-            return None
         if not hasattr(self, '_sleep_time'):
             frame_time_ms = 1000 / self.reader.frame_rate if hasattr(self.reader, 'frame_rate') else 50
             self._sleep_time = frame_time_ms / 1000 / (self.playback_speed or 1)

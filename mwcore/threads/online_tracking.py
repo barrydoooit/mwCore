@@ -20,7 +20,7 @@ class OnlineTrackingThread(QThread, Generic[K]):
                  use_framedata: bool = False,
                  parent=None):
 
-        super().__init__(parent=parent)
+        QThread.__init__(self, parent)
         if isinstance(tracker, dict):
             from mwcore.registry import TRACKERS
             tracker = TRACKERS.build(tracker)

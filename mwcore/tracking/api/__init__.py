@@ -5,8 +5,10 @@ from .trackers.gtrack_kaloyan import GTrackKTracker
 from .trackers.gtrack_c_impl import GTrackCTracker
 from .trackers.dawnlh_tracker import DawnLHTracker
 from .trackers.rt_mthf import RT_MTFHTracker
+from .base import BaseTracker
 
 __all__ = [
+    'BaseTracker',
     'GTrackATracker',
     'GTrackTracker',
     'RKFTracker',

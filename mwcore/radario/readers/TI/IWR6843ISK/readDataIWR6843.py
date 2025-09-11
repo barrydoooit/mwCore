@@ -26,6 +26,7 @@ class BufferedPcdReaderIWR6843(BaseTIBufferedReader):
                  CLI_port: Union[str, serial.Serial], 
                  Data_port: Union[str, serial.Serial],
                  config_file_path: str,
+                 density_threshold: int = 0,
                  max_buffer_size: int = 2**20,
                  firmware_tilt_deg: float = 0.0,
                  firmware_tilt_axis: Literal['x','y','z'] = 'x',
@@ -46,6 +47,7 @@ class BufferedPcdReaderIWR6843(BaseTIBufferedReader):
             to return points to the radar's native coordinate frame.
         """
         super().__init__(CLI_port, Data_port, config_file_path, max_buffer_size)
+        self.density_threshold = int(density_threshold)
         self.firmware_tilt_deg = float(firmware_tilt_deg)
         self.firmware_tilt_axis = firmware_tilt_axis
         self.undo_firmware_tilt = bool(undo_firmware_tilt)
@@ -146,8 +148,11 @@ class BufferedPcdReaderIWR6843(BaseTIBufferedReader):
                     # pointcloud range: [x_min, y_min, z_min, x_max, y_max, z_max]
                     mask = np.all((xyz >= self.point_cloud_range[:3]) & (xyz <= self.point_cloud_range[3:]), axis=1)
                     output_dict['pointCloud'] = output_dict['pointCloud'][mask]
+                    output_dict['numDetectedPoints'] = output_dict['pointCloud'].shape[0]
                     if not mask.any():
                         data_ok = 0
+                if output_dict['numDetectedPoints'] < self.density_threshold:
+                    data_ok = 0
 
         if data_ok:
             det_obj = {

@@ -17,12 +17,15 @@ log = logging.getLogger(__name__)
 class PoseEstim3DDatasetReader(OfflineReader):
     """Reader for MRI offline data"""
     
-    def __init__(self, dataloader: Union[DataLoader, dict]):
+    def __init__(self, dataloader: Union[DataLoader, dict], circular: bool = False, frame_rate: float = None):
         super().__init__()
         if isinstance(dataloader, DataLoader):
             self.dataloader = dataloader
         elif isinstance(dataloader, dict):
             self.dataloader = self._build_dataloader(dataloader)
+        self.circular = circular
+        if frame_rate is not None:
+            self.frame_rate = float(frame_rate)
     
     @property
     def dataset_iterator(self):
@@ -60,8 +63,12 @@ class PoseEstim3DDatasetReader(OfflineReader):
         try:
             batch = next(self.dataset_iterator)
         except StopIteration:
-            self._finished = True
-            return 0, -1, {}, None
+            if not self.circular:
+                self._finished = True
+                return 0, -1, {}, None
+            else:
+                self._dataset_iterator = iter(self.dataloader)
+                batch = next(self.dataset_iterator)
         except Exception as e:
             log.info(f"Error reading from dataset: {e}")
             return 0, -1, {}, None
@@ -88,7 +95,10 @@ class PoseEstim3DDatasetReader(OfflineReader):
                 skel = skel[0]
         
         if skel is not None and skel.size:
-            gt = skel.reshape(-1, 3).T
+            skel_flat = skel.flatten()
+            if len(skel_flat) % 3 != 0:
+                skel_flat = skel_flat[:len(skel_flat) - (len(skel_flat) % 3)]
+            gt = skel_flat.reshape(-1, 3).T
         else:
             gt = None
 

@@ -73,7 +73,10 @@ class TrackingApp(BaseMWOnlineApp):
         _signal_timer.start(1000)  # check every 100 ms
         _signal_timer.timeout.connect(lambda: None)
 
-        self.reader_thread.signal_framedata.connect(self.tracker_thread.process_frame, Qt.ConnectionType.QueuedConnection)
+        if hasattr(self.reader_thread, 'signal_framedata'):
+            self.reader_thread.signal_framedata.connect(self.tracker_thread.process_frame, Qt.ConnectionType.QueuedConnection)
+        else:
+            self.reader_thread.raw_data.connect(self.tracker_thread.process_frame, Qt.ConnectionType.QueuedConnection)
         if self.visualizer is not None:
             self.reader_thread.array_data.connect(
                 self.visualizer.on_new_cloud, Qt.ConnectionType.QueuedConnection
@@ -85,11 +88,13 @@ class TrackingApp(BaseMWOnlineApp):
 
         if self.evaluator_worker is not None:
             self.tracker_thread.tracking_framedata.connect(self.evaluator_worker.process_framedata, Qt.ConnectionType.QueuedConnection)
-            self.reader_thread.signal_finished.connect(self.evaluator_worker.update_final_frame_number, Qt.ConnectionType.QueuedConnection)
+            if hasattr(self.reader_thread, 'signal_finished'):
+                self.reader_thread.signal_finished.connect(self.evaluator_worker.update_final_frame_number, Qt.ConnectionType.QueuedConnection)
             self.evaluator_worker.signal_evaluation_complete.connect(self.app.quit)
             self.evaluator_thread.start()
         else:
-            self.reader_thread.signal_finished.connect(lambda x: self.app.quit())
+            if hasattr(self.reader_thread, 'signal_finished'):
+                self.reader_thread.signal_finished.connect(lambda x: self.app.quit())
         
         self.reader_thread.start()
         self.tracker_thread.start()
