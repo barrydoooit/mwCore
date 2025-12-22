@@ -21,7 +21,7 @@ dependencies = [
     "pyserial==3.5",
     "PySide6",
     "scikit_learn==1.6.1",
-    "scipy==1.15.3",
+    "scipy>=1.15.3",
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
