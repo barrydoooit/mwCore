@@ -16,11 +16,11 @@ dependencies = [
     "filterpy==1.4.5",
     "mmengine==0.10.7",
     "networkx==3.4.2",
-    "numpy==1.26",
+    "numpy>=1.26",
     "pyqtgraph==0.13.7",
     "pyserial==3.5",
     "PySide6",
-    "scikit_learn==1.6.1",
+    "scikit_learn>=1.6.1",
     "scipy>=1.15.3",
 ]
 classifiers = [
