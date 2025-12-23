@@ -1,7 +1,17 @@
 import numpy as np
 from mwcore.radario.readers.base import SerialReader
 from mwcore.registry import READERS, THREADS
-from PySide6.QtCore import QThread, Signal
+
+try:
+    from PySide6.QtCore import QThread, Signal
+except ImportError:
+    print("Failed to import QT, mocking...")
+    class QThread:
+        def __init__(*args, **kwargs):
+            pass
+    class Signal:
+        def __init__(*args, **kwargs):
+            pass
 
 from typing import TYPE_CHECKING, Dict, Generic, TypeVar, Union
 
