@@ -84,9 +84,7 @@ class BaseMWOnlineApp(BaseMWApp):
                 playback_speed=playback_speed
             ))
         elif issubclass(reader_cls, SerialReader):
-            assert reader_cfg.get("type") == "BufferedPcdReaderIWR6843", \
-            "By default we use BufferedPcdReaderIWR6843. \
-                Override _make_reader method in your app class to allow readers for custom radars."
+            # Support any SerialReader subclass (BufferedPcdReaderIWR6843, UdpRawDataReader, etc.)
             sensor_started = reader_cfg.pop("sensor_started", False)
             return THREADS.build(dict(
                 type="OnlineReaderThread",
