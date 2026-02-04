@@ -1,35 +1,63 @@
-[build-system]
-requires = ["setuptools>=42", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "mwcore"
-version = "0.0.0"
-description = "Short description of mwcore package"
-readme = "README.md"
-requires-python = ">=3.9"
-license = { text = "MIT" }
-authors = [
-  { name="Barry Ding", email="barrydoooit@gmail.com" }
-]
+version = "0.1.0"
+requires-python = ">=3.10"
 dependencies = [
+    "addict==2.4.0",
+    "colorama==0.4.6",
+    "contourpy==1.3.2",
+    "cycler==0.12.1",
+    "debugpy==1.8.19",
+    "filelock==3.20.3",
     "filterpy==1.4.5",
+    "fonttools==4.61.1",
+    "fsspec==2026.1.0",
+    "h5py==3.15.1",
+    "jinja2==3.1.6",
+    "joblib==1.5.3",
+    "kiwisolver==1.4.9",
+    "markdown-it-py==4.0.0",
+    "markupsafe==3.0.3",
+    "matplotlib==3.10.8",
+    "mdurl==0.1.2",
     "mmengine==0.10.7",
+    "mpmath==1.3.0",
     "networkx==3.4.2",
     "numpy>=1.26",
-    "pyqtgraph==0.13.7",
+    "opencv-python==4.13.0.90",
+    "packaging==26.0",
+    "pillow==12.1.0",
+    "platformdirs==4.5.1",
+    "pygments==2.19.2",
+    "pyopengl==3.1.10",
+    "pyopengl-accelerate==3.1.10",
+    "pyparsing==3.3.2",
+    "pyqtgraph==0.14.0",
     "pyserial==3.5",
-    "PySide6",
-    "scikit_learn==1.6.1",
+    "pyside6==6.8.0.2",
+    "pyside6-addons==6.8.0.2",
+    "pyside6-essentials==6.8.0.2",
+    "python-dateutil==2.9.0.post0",
+    "pyyaml==6.0.3",
+    "rich==14.2.0",
+    "scikit-learn==1.7.2",
     "scipy==1.15.3",
-]
-classifiers = [
-  "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
+    "shiboken6==6.8.0.2",
+    "six==1.17.0",
+    "sympy==1.14.0",
+    "termcolor==3.3.0",
+    "threadpoolctl==3.6.0",
+    "tomli==2.4.0",
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+    "tqdm==4.67.1",
+    "typing-extensions==4.15.0",
+    "yapf==0.43.0"
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["mwcore*"]
-exclude = ["tests", "docs"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mwcore"]
