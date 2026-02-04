@@ -6,7 +6,7 @@ import numpy as np
 # 1. Setup paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mwcore_root = os.path.dirname(current_dir)
-legacy_project_root = os.path.join(os.path.dirname(mwcore_root), 'yukuowo')
+legacy_project_root = os.path.join(os.path.dirname(mwcore_root), 'radar_legacy')
 
 sys.path.append(mwcore_root)
 sys.path.append(legacy_project_root)
