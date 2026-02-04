@@ -6,13 +6,13 @@ import numpy as np
 # 1. Setup paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mwcore_root = os.path.dirname(current_dir)
-yukuowo_root = os.path.join(os.path.dirname(mwcore_root), 'yukuowo')
+legacy_project_root = os.path.join(os.path.dirname(mwcore_root), 'yukuowo')
 
 sys.path.append(mwcore_root)
-sys.path.append(yukuowo_root)
+sys.path.append(legacy_project_root)
 
 # 2. Imports
-# Import Legacy from yukuowo
+# Import Legacy from reading project
 try:
     from legacy import pc_generation as legacy
     print("Legacy module loaded successfully.")
