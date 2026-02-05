@@ -24,7 +24,7 @@ import logging
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mwcore.radario.readers.TI.IWR6843ISK.udp_raw_reader import UdpRawDataReader
+from mwcore.radario.readers.TI.DCA1000EVM.udp_raw_reader import UdpRawDataReader
 from mwcore.radario.readers.offlineReaders.raw_bin_reader import RawBinReader
 from mwcore.signal_processing.radar_processor import RadarConfig
 
