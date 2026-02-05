@@ -1,11 +1,10 @@
+## Installation
+Please refer to the [installation guide](docs/INSTALLATION.md)
+
 ## Prepare Dataset
 mRI-Walking:
 ```sh
 python tools/create_data.py mri --root-path /parent/of/dataset_release/folder --out-dir data/mri
-```
-Asterios-PAW:
-```sh
-python tools/create_data.py paw --root-path /parent/of/kinect/folder --out-dir data/paw
 ```
 
 ## Run online reading with visualization
