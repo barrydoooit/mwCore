@@ -16,3 +16,6 @@ errors/
 /error_stats
 gtrack_debug.log
 exp_data
+# Ignore test data and venv
+tests/data/
+venv/
