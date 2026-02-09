@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from pathlib import Path
+import struct
 
 from mwcore.registry import READERS
 from mwcore.radario.readers.base import SerialReader
@@ -133,6 +134,7 @@ class UdpRawDataReader(SerialReader):
         """
         # Get raw frame from capture thread
         frame_data, frame_num, lost_packet_flag = self.capture_thread.get_frame()
+        timestamp = time.time()
         
         # Handle special return codes
         if frame_num == -1:
@@ -157,23 +159,13 @@ class UdpRawDataReader(SerialReader):
         # Optionally save raw data to .bin file
         if self.file_handle is not None:
             try:
+                self.file_handle.write(struct.pack('d', float(timestamp)))
                 self.file_handle.write(frame_data.tobytes())
                 self.file_handle.flush()
             except Exception as e:
                 logger.error(f"Error writing to .bin file: {e}")
-        
-        # Process through DSP pipeline
-        try:
-            result = self.processor.process(frame_data)
-            point_cloud = result['point_cloud']
-        except Exception as e:
-            logger.error(f"Error processing frame {frame_num}: {e}")
-            return 0, frame_num, {}
-        
-        # Convert point cloud to det_obj format
-        # point_cloud shape is (6, N) where rows are [x, y, z, doppler, energy, range]
-        if point_cloud.size == 0 or point_cloud.shape[1] == 0:
-            # No points detected
+            
+            # skip processing
             det_obj = {
                 'numObj': 0,
                 'x': np.array([]),
@@ -181,29 +173,42 @@ class UdpRawDataReader(SerialReader):
                 'z': np.array([]),
                 'doppler': np.array([]),
                 'peakVal': np.array([]),
-                'timestamp': time.time() * 1000
+                'timestamp': timestamp
             }
             return 1, frame_num, det_obj
-        
-        # Extract point cloud components
-        # point_cloud format: [x, y, z, doppler, energy, range]
-        num_points = point_cloud.shape[1]
-        
-        det_obj = {
-            'numObj': num_points,
-            'x': point_cloud[0, :],      # x coordinates
-            'y': point_cloud[1, :],      # y coordinates
-            'z': point_cloud[2, :],      # z coordinates
-            'doppler': point_cloud[3, :],  # doppler velocities
-            'peakVal': point_cloud[4, :],  # energy/SNR values
-            'timestamp': time.time() * 1000
-        }
-        
-        self.frame_count += 1
-        if self.frame_count % 100 == 0:
-            logger.info(f"Processed {self.frame_count} frames (latest: {num_points} points)")
-        
-        return 1, frame_num, det_obj
+        else:
+            # Process through DSP pipeline
+            try:
+                result = self.processor.process(frame_data)
+                point_cloud = result['point_cloud']
+            except Exception as e:
+                logger.error(f"Error processing frame {frame_num}: {e}")
+                return 0, frame_num, {}
+            
+            # Convert point cloud to det_obj format
+            # point_cloud shape is (6, N) where rows are [x, y, z, doppler, energy, range]
+            if point_cloud.size == 0 or point_cloud.shape[1] == 0:
+                assert False, "No points detected"
+            
+            # Extract point cloud components
+            # point_cloud format: [x, y, z, doppler, energy, range]
+            num_points = point_cloud.shape[1]
+            
+            det_obj = {
+                'numObj': num_points,
+                'x': point_cloud[0, :],      # x coordinates
+                'y': point_cloud[1, :],      # y coordinates
+                'z': point_cloud[2, :],      # z coordinates
+                'doppler': point_cloud[3, :],  # doppler velocities
+                'peakVal': point_cloud[4, :],  # energy/SNR values
+                'timestamp': time.time() * 1000
+            }
+            
+            self.frame_count += 1
+            if self.frame_count % 100 == 0:
+                logger.info(f"Processed {self.frame_count} frames (latest: {num_points} points)")
+            
+            return 1, frame_num, det_obj
     
     def close(self):
         """Stop capture thread and close resources."""

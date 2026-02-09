@@ -19,3 +19,5 @@ exp_data
 # Ignore test data and venv
 tests/data/
 venv/
+
+*.bin

@@ -1,7 +1,7 @@
 
 import struct
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple, Protocol
+from typing import Dict, Any, List, Optional, Tuple, Protocol, Union
 from abc import ABC, abstractmethod
 import math
 
@@ -53,12 +53,18 @@ class RadarConfig:
 class RadarBinFileReader:
     """Reads raw radar data from .bin files."""
     
-    def __init__(self, file_path: str, config: RadarConfig):
+    def __init__(self, file_path: str, config: RadarConfig, has_timestamp: bool = True):
         self.file_path = file_path
         self.config = config
+        self.has_timestamp = has_timestamp
         self.file_handle = open(self.file_path, 'rb')
         self.file_size = self._get_file_size()
-        self.total_frames = self.file_size // self.config.frame_bytes
+        
+        # Calculate frame stride
+        self.header_size = 8 if self.has_timestamp else 0 # 8 bytes for double timestamp
+        self.stride = self.header_size + self.config.frame_bytes
+        
+        self.total_frames = self.file_size // self.stride
 
     def _get_file_size(self) -> int:
         current_pos = self.file_handle.tell()
@@ -71,27 +77,49 @@ class RadarBinFileReader:
         self.file_handle.seek(0)
         return self
 
-    def __next__(self) -> np.ndarray:
+    def __next__(self) -> tuple[float, np.ndarray]:
+        # Read header (timestamp) if present
+        if self.has_timestamp:
+            ts_data = self.file_handle.read(8)
+            if len(ts_data) < 8:
+                raise StopIteration
+            timestamp = struct.unpack('d', ts_data)[0]
+
         data = self.file_handle.read(self.config.frame_bytes)
         if len(data) < self.config.frame_bytes:
             raise StopIteration
         
         # Convert raw bytes to int16 array
-        return np.frombuffer(data, dtype=np.int16)
+        frame = np.frombuffer(data, dtype=np.int16)
+        
+        if self.has_timestamp:
+            return timestamp, frame
+        return frame
 
-    def read_frame(self, frame_idx: int) -> Optional[np.ndarray]:
+    def read_frame(self, frame_idx: int) -> Optional[Union[np.ndarray, tuple[float, np.ndarray]]]:
         """Reads a specific frame by index."""
         if frame_idx < 0 or frame_idx >= self.total_frames:
             return None
         
-        offset = frame_idx * self.config.frame_bytes
+        offset = frame_idx * self.stride
         self.file_handle.seek(offset)
+        
+        if self.has_timestamp:
+            ts_data = self.file_handle.read(8)
+            if len(ts_data) < 8:
+                return None
+            timestamp = struct.unpack('d', ts_data)[0]
+
         data = self.file_handle.read(self.config.frame_bytes)
         
         if len(data) != self.config.frame_bytes:
             return None
             
-        return np.frombuffer(data, dtype=np.int16)
+        frame = np.frombuffer(data, dtype=np.int16)
+        
+        if self.has_timestamp:
+            return timestamp, frame
+        return frame
 
     def close(self):
         self.file_handle.close()
