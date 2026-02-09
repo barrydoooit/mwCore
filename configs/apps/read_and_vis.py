@@ -5,3 +5,7 @@ type = 'BaseMWOnlineApp'
 vis_cfg = dict(
     type='OnlinePointCloudVisualizer',
 )
+
+reader_cfg = dict(
+    type='RawDataReader',                   # ← Disable (minimal impact)
+)
