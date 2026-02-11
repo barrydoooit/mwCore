@@ -60,7 +60,8 @@ def test_realtime(save_file=None, duration=None):
         save_to_file=save_file,
         enable_static_clutter_removal=True,
         energy_top_128=True,
-        range_cut=True
+        range_cut=True,
+        process_point_cloud=True
     )
     
     try:
