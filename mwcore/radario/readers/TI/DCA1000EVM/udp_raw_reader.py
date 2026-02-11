@@ -48,6 +48,7 @@ class UdpRawDataReader(SerialReader):
         buffer_size: int = 1500,
         radar_config: Optional[RadarConfig] = None,
         save_to_file: Optional[str] = None,
+        process_point_cloud: bool = False,
         enable_static_clutter_removal: bool = True,
         energy_top_128: bool = True,
         range_cut: bool = True
@@ -107,6 +108,7 @@ class UdpRawDataReader(SerialReader):
             self.file_handle = open(save_to_file, 'wb')
         
         self.frame_count = 0
+        self.process_point_cloud = process_point_cloud
         logger.info("UdpRawDataReader initialized successfully")
     
     def connect(self):
@@ -164,19 +166,8 @@ class UdpRawDataReader(SerialReader):
                 self.file_handle.flush()
             except Exception as e:
                 logger.error(f"Error writing to .bin file: {e}")
-            
-            # skip processing
-            det_obj = {
-                'numObj': 0,
-                'x': np.array([]),
-                'y': np.array([]),
-                'z': np.array([]),
-                'doppler': np.array([]),
-                'peakVal': np.array([]),
-                'timestamp': timestamp
-            }
-            return 1, frame_num, det_obj
-        else:
+        
+        if self.process_point_cloud:
             # Process through DSP pipeline
             try:
                 result = self.processor.process(frame_data)
@@ -208,6 +199,18 @@ class UdpRawDataReader(SerialReader):
             if self.frame_count % 100 == 0:
                 logger.info(f"Processed {self.frame_count} frames (latest: {num_points} points)")
             
+            return 1, frame_num, det_obj
+        else:
+            # return dummy point cloud
+            det_obj = {
+                'numObj': 0,
+                'x': np.array([]),
+                'y': np.array([]),
+                'z': np.array([]),
+                'doppler': np.array([]),
+                'peakVal': np.array([]),
+                'timestamp': timestamp
+            }
             return 1, frame_num, det_obj
     
     def close(self):
