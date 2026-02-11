@@ -1,9 +1,11 @@
+from mwcore.registry import ADCPROCESSORS
 from ..frame import RadarFrame
 from .base import BaseSignalProcess
 import numpy as np
 
 
 
+@ADCPROCESSORS.register_module()
 class RangeFFT(BaseSignalProcess):
     """Range FFT with Hamming window."""
     def __init__(self, name: str = "RangeFFT"):
@@ -14,6 +16,7 @@ class RangeFFT(BaseSignalProcess):
         window = np.hamming(frame.config.adc_samples)
         frame.range_fft = np.fft.fft(frame.radar_cube * window, axis=3)
 
+@ADCPROCESSORS.register_module()
 class DopplerFFT(BaseSignalProcess):
     """Doppler FFT with Clutter Removal."""
     def __init__(self, clutter_removal: bool = True, name: str = "DopplerFFT"):

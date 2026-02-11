@@ -1,9 +1,9 @@
-from .base import BaseMWApp, BaseMWOnlineApp
+from .base import BaseApp, BaseMWOnlineApp
 from .tracking import TrackingApp
 # from .tracking import MWOnlineTrackingApp
 
 __all__ = [
-    'BaseMWApp',
+    'BaseApp',
     'BaseMWOnlineApp',
     'TrackingApp',
     # 'MWOnlineTrackingApp'

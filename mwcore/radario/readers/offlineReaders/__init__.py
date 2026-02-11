@@ -1,2 +1,2 @@
 from .hpe_dataset_reader import PoseEstim3DDatasetReader
-from .raw_bin_reader import RawBinReader
+from .adcbin_reader import OfflineAdcDataReader

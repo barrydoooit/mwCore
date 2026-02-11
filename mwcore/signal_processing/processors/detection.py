@@ -5,8 +5,8 @@ from typing import List, Optional, Tuple, Dict
 from scipy.ndimage import convolve1d
 
 from mwcore.registry import ADCPROCESSORS
-from signal_processing.frame import RadarFrame
-from signal_processing.processors.base import BaseSignalProcess
+from mwcore.signal_processing.frame import RadarFrame
+from mwcore.signal_processing.processors.base import BaseSignalProcess
 
 
 
@@ -18,7 +18,7 @@ class CFAR_CA(BaseSignalProcess):
     """
     def __init__(self, name = "CFAR_CA"):
         super().__init__(name)
-        
+
     def execute(self, frame: RadarFrame):
         # 1. Collapse to Energy Map (Non-Coherent Integration)
         # Sum magnitude squared across antennas

@@ -1,5 +1,5 @@
 from abc import ABC
-from signal_processing.config import ProcessingMode
+from mwcore.signal_processing.config import ProcessingMode
 from ..frame import RadarFrame
 from typing import Protocol, runtime_checkable
 

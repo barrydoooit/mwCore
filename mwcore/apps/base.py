@@ -1,9 +1,10 @@
 from copy import deepcopy
+import warnings
 import time
-from typing import TYPE_CHECKING, Dict, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 import sys
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, QObject
 import os.path as osp
 
 from mmengine.registry import DefaultScope
@@ -23,7 +24,7 @@ from mwcore.registry import READERS, THREADS, VISUALIZERS, APPS
 ConfigType = Union[Dict, Config, ConfigDict]
 
 @APPS.register_module()
-class BaseMWApp:
+class BaseApp:
     def __init__(self, cfg: Optional[ConfigType] = None):
         self.cfg = deepcopy(cfg) if cfg is not None else {}
         
@@ -50,12 +51,14 @@ class BaseMWApp:
         return NotImplementedError
 
 @APPS.register_module()
-class BaseMWOnlineApp(BaseMWApp):
+class BaseMWOnlineApp(BaseApp):
     def __init__(self,
                  reader_cfg: dict,
                  vis_cfg: Optional[dict] = None,
                  cfg: Optional[ConfigType] = None):
         super().__init__(cfg)
+        warn_msg = "BaseMWOnlineApp is deprecated. Please use BaseMWApp instead."
+        warnings.warn(warn_msg, DeprecationWarning)
         self.reader_cfg = deepcopy(reader_cfg)
         self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else None
 

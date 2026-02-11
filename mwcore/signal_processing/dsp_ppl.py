@@ -44,7 +44,7 @@ class DspPipeline:
         """
         radar_args = cfg.get('radar_cfg', {})
         radar_config = RadarConfig(**radar_args)
-        pipeline_steps = cfg.get('pipeline', [])
+        pipeline_steps = cfg.get('pipeline_cfg', [])
         return cls(radar_config, pipeline_steps)
 
     def run(self, raw_bytes: bytes) -> RadarFrame:
