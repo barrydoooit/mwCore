@@ -10,7 +10,7 @@ import os.path as osp
 
 from mmengine.registry import DefaultScope
 from mmengine.config import Config, ConfigDict
-from mwcore.apps.base import ConfigType
+from mwcore.apps.base import BaseApp, ConfigType
 from mwcore.visualization.visualizers.online_pointcloud import OnlinePointCloudVisualizer
 
 from mwcore.registry import READERS, THREADS, VISUALIZERS, APPS
@@ -18,13 +18,13 @@ from mwcore.registry import READERS, THREADS, VISUALIZERS, APPS
 
 
 @APPS.register_module()
-class BaseMWApp:
+class BaseMWApp(BaseApp):
     def __init__(self,
                  thread_cfg: dict,
                  vis_cfg: Optional[dict] = None,
                  connections: Optional[List[dict]] = None,
                  cfg: Optional[ConfigType] = None):
-        self.cfg = deepcopy(cfg) if cfg is not None else {}
+        super().__init__(cfg)
         self.thread_cfg = deepcopy(thread_cfg)
         self.vis_cfg = deepcopy(vis_cfg) if vis_cfg is not None else None
         self.connection_cfgs = deepcopy(connections) if connections is not None else []
@@ -32,25 +32,6 @@ class BaseMWApp:
         self._reader_worker_obj = None
         self._reader_thread_obj = None
         self._visualizer_obj = None
-
-        self._init_scope()
-
-    def _init_scope(self):
-        self._timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime(time.time()))
-        experiment_name = self.cfg.get('experiment_name', None)
-        
-        if experiment_name is not None:
-            self._experiment_name = f'{experiment_name}_{self._timestamp}'
-        elif getattr(self.cfg, 'filename', None) is not None:
-            filename_no_ext = osp.splitext(osp.basename(self.cfg.filename))[0]
-            self._experiment_name = f'{filename_no_ext}_{self._timestamp}'
-        else:
-            self._experiment_name = self._timestamp
-            
-        if self.cfg.get('default_scope', None) is not None:
-            self.default_scope = DefaultScope.get_instance(
-                self._experiment_name,
-                scope_name=self.cfg['default_scope'])
 
     @property
     def reader_worker(self) -> QObject:

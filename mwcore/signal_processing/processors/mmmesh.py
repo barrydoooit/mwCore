@@ -28,12 +28,13 @@ class TopKDetector(BaseSignalProcess):
 
         # 1. Calculate Energy Map (Sum of Mags across antennas)
         # Shape: (Loops, Samples) -> (Doppler, Range)
-        energy_map = np.sum(np.abs(frame.doppler_fft), axis=(0, 1))
+        coherent = np.sum(frame.doppler_fft, axis=(0,1))
+        energy_map = np.log10(np.abs(coherent) + 1e-12)
         
         # 2. Hardcoded Range Cut (Specific to mmMesh logic to remove near/far noise)
         # Note: mmMesh typically zeroes out the edges
-        energy_map[:, :self.min_range_idx] = 0
-        energy_map[:, self.max_range_idx:] = 0
+        energy_map[:, :self.min_range_idx] = -100
+        energy_map[:, self.max_range_idx:] = -100
 
         # 3. Find Top K Threshold
         flat_energy = energy_map.ravel()
@@ -72,17 +73,22 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
     mmMesh Standard 'Naive' AoA.
     Refactored to support explicit 2D/3D modes.
     """
-    def __init__(self, fft_size: int = 64, name: str = "NaiveAoA"):
+    def __init__(self, 
+                 fft_size: int = 64, 
+                 points_first: bool = True,
+                 name: str = "NaiveAoA"):
         super().__init__(name)
+        self.points_first = points_first
         self.fft_size = fft_size
 
     def _get_vectors_2d(self, azimuth_ant):
         """Helper to get X vector only."""
         num_detected = azimuth_ant.shape[1]
         az_padded = np.zeros((self.fft_size, num_detected), dtype=np.complex_)
-        # Assuming 4 Rx, 2 Tx for Azimuth -> 8 lines
-        az_padded[:8, :] = azimuth_ant
-        
+
+        num_az_ant = azimuth_ant.shape[0]
+        az_padded[:num_az_ant, :] = azimuth_ant
+        # az_padded[:8, :] = azimuth_ant
         az_fft = np.fft.fft(az_padded, axis=0)
         k_max = np.argmax(np.abs(az_fft), axis=0)
         
@@ -142,7 +148,8 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
         # Get Z (Elevation Phase Diff)
         # Pad elevation to same size
         el_padded = np.zeros((self.fft_size, data.shape[2]), dtype=np.complex_)
-        el_padded[:4, :] = elevation_ant # 4 Rx
+        # el_padded[:4, :] = elevation_ant # 4 Rx
+        el_padded[:elevation_ant.shape[0], :] = elevation_ant
         el_fft = np.fft.fft(el_padded, axis=0)
         el_max_idx = np.argmax(np.abs(el_fft), axis=0)
         peak_el = el_fft[el_max_idx, np.arange(data.shape[2])]
@@ -164,12 +171,9 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
         cfg = frame.config
         r_vals = r_idxs[valid] * cfg.range_resolution
         
-        d_signed = d_idxs[valid].copy()
-        # Fix doppler wrapping if needed, depends on FFT Shift state. 
-        # Assuming doppler_fft is already shifted centrally, indices are 0..127. 
-        # But for velocity calculation we need signed relative to center.
-        if np.max(d_signed) > cfg.loops_per_frame // 2:
-             d_signed[d_signed >= cfg.loops_per_frame // 2] -= cfg.loops_per_frame
+        # Doppler FFT is fftshift()'d (see DopplerFFT.execute), so center index is N/2.
+        d_signed = d_idxs[valid].astype(np.int32) - (cfg.loops_per_frame // 2)
+        v_vals = d_signed * cfg.doppler_resolution
              
         v_vals = d_signed * cfg.doppler_resolution
         snr = frame.detected_points[valid, 2]
@@ -178,4 +182,5 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
         y = y_vec[valid] * r_vals
         z = z_vec[valid] * r_vals
         
-        frame.point_cloud = np.stack((x, y, z, v_vals, snr, r_vals), axis=0)
+        pc_dim_first = np.stack((x, y, z, v_vals, snr, r_vals), axis=0)
+        frame.point_cloud = pc_dim_first.T if self.points_first else pc_dim_first

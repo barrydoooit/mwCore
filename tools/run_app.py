@@ -29,6 +29,7 @@ if __name__ == "__main__":
     if app_type is None:
         raise ValueError("Application type is not specified in the configuration file")
     app_class: Type['BaseApp']= APPS.get(app_type)
+    print(app_class)
     app = app_class.from_cfg(cfg)
     
     app.start()
