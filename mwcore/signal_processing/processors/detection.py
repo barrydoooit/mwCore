@@ -16,13 +16,18 @@ class CFAR_CA(BaseSignalProcess):
     Cell-Averaging CFAR (CA-CFAR) implementation derived from OpenRadar `cfar.py`.
     Uses convolution for efficient sliding window calculation.
     """
+    requires = {'doppler_fft'}
+    provides = {'detected_points'}
+
     def __init__(self, name = "CFAR_CA"):
         super().__init__(name)
 
-    def execute(self, frame: RadarFrame):
+    def _process_generic(self, frame: RadarFrame):
+        doppler_fft = self.read(frame, 'doppler_fft')
+
         # 1. Collapse to Energy Map (Non-Coherent Integration)
         # Sum magnitude squared across antennas
-        energy = np.sum(np.abs(frame.doppler_fft)**2, axis=(0, 1)) # (Loops, Samples)
+        energy = np.sum(np.abs(doppler_fft)**2, axis=(0, 1)) # (Loops, Samples)
         
         # 2. Setup CFAR Kernel
         guard = frame.config.cfar_guard_len
@@ -45,7 +50,7 @@ class CFAR_CA(BaseSignalProcess):
         det_indices = np.argwhere(det_mask)
         
         if len(det_indices) == 0:
-            frame.detected_points = np.zeros((0, 3))
+            self.write(frame, 'detected_points', np.zeros((0, 3)))
             return
             
         # 6. (Optional) Peak Grouping / Filtering
@@ -54,4 +59,5 @@ class CFAR_CA(BaseSignalProcess):
         
         # Format: [RangeIdx, DopplerIdx, Value]
         # det_indices is (Doppler, Range), so flip col 0 and 1
-        frame.detected_points = np.column_stack((det_indices[:, 1], det_indices[:, 0], peaks_vals))
+        detected_points = np.column_stack((det_indices[:, 1], det_indices[:, 0], peaks_vals))
+        self.write(frame, 'detected_points', detected_points)

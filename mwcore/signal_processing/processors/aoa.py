@@ -5,19 +5,22 @@ from mwcore.signal_processing.frame import RadarFrame
 from mwcore.signal_processing.processors.base import BaseSignalProcess, Supports2D, Supports3D
 
 
-
 @ADCPROCESSORS.register_module()
 class AoA_DopplerCompensated(BaseSignalProcess, Supports2D, Supports3D):
     """
     Professional Beamforming AoA.
     Supports both 2D (Azimuth only) and 3D (Azimuth + Elevation).
     """
+    requires = {'detected_points', 'doppler_fft'}
+    provides = {'point_cloud'}
+
     def __init__(self, name: str = "AoA_DopplerCompensated"):
         super().__init__(name)
     
     def _prepare_data(self, frame: RadarFrame):
         """Common data extraction and Doppler compensation."""
-        det_points = frame.detected_points
+        # 1. Safely read inputs
+        det_points = self.read(frame, 'detected_points')
         if det_points is None or len(det_points) == 0:
             return None, None, None
 
@@ -26,7 +29,8 @@ class AoA_DopplerCompensated(BaseSignalProcess, Supports2D, Supports3D):
         d_idxs = det_points[:, 1].astype(int)
         
         # Extract data: (Tx, Rx, N_det)
-        antenna_data = frame.doppler_fft[:, :, d_idxs, r_idxs]
+        doppler_fft = self.read(frame, 'doppler_fft')
+        antenna_data = doppler_fft[:, :, d_idxs, r_idxs]
         
         # Doppler Compensation (TDM Correction)
         # Tx1 fires 1 unit later, Tx2 fires 2 units later (relative to Tx0)
@@ -50,9 +54,8 @@ class AoA_DopplerCompensated(BaseSignalProcess, Supports2D, Supports3D):
         """2D Implementation: Calculate X, Y. Force Z=0."""
         data, r_idxs, d_idxs_signed = self._prepare_data(frame)
         if data is None:
-            frame.point_cloud = np.zeros((6, 0))
+            self.write(frame, 'point_cloud', np.zeros((6, 0)))
             return
-            
         # 1. Select Azimuth Antennas Only (Tx0 + Tx2) -> 8 Antennas
         # We ignore Tx1 (Elevation) completely in 2D mode
         azimuth_ant = np.concatenate((data[0], data[1]), axis=0)
@@ -83,17 +86,20 @@ class AoA_DopplerCompensated(BaseSignalProcess, Supports2D, Supports3D):
         y = y_vec[valid] * r_vals
         z = np.zeros_like(x) # Z is explicitly 0
         v = d_idxs_signed[valid] * cfg.doppler_resolution
-        snr = frame.detected_points[valid, 2]
         
-        frame.point_cloud = np.stack((x, y, z, v, snr, r_vals), axis=0)
+        # Re-read detected points to extract SNR for the valid indices
+        det_points = self.read(frame, 'detected_points')
+        snr = det_points[valid, 2]
+        
+        point_cloud = np.stack((x, y, z, v, snr, r_vals), axis=0)
+        self.write(frame, 'point_cloud', point_cloud)
 
     def process_3d(self, frame: RadarFrame) -> None:
         """3D Implementation: Calculate X, Y, Z."""
         data, r_idxs, d_idxs_signed = self._prepare_data(frame)
         if data is None:
-            frame.point_cloud = np.zeros((6, 0))
+            self.write(frame, 'point_cloud', np.zeros((6, 0)))
             return
-
         # 1. Azimuth FFT (Same as 2D)
         azimuth_ant = np.concatenate((data[0], data[1]), axis=0)
         num_angle_bins = 64
@@ -130,6 +136,10 @@ class AoA_DopplerCompensated(BaseSignalProcess, Supports2D, Supports3D):
         y = y_vec[valid] * r_vals
         z = z_vec[valid] * r_vals
         v = d_idxs_signed[valid] * cfg.doppler_resolution
-        snr = frame.detected_points[valid, 2]
         
-        frame.point_cloud = np.stack((x, y, z, v, snr, r_vals), axis=0)
+        # Re-read detected points to extract SNR for the valid indices
+        det_points = self.read(frame, 'detected_points')
+        snr = det_points[valid, 2]
+        
+        point_cloud = np.stack((x, y, z, v, snr, r_vals), axis=0)
+        self.write(frame, 'point_cloud', point_cloud)
