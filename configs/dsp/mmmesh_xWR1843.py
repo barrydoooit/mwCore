@@ -1,4 +1,4 @@
-mmmesh_radar_cfg = dict(
+mmwave_radar_cfg = dict(
     mode="3D",
     num_tx=3,
     num_rx=4,
@@ -12,7 +12,7 @@ mmmesh_radar_cfg = dict(
     cfar_threshold_scale=15.0
 )
 
-mmmesh_pipeline_cfg = [
+dsp_pipeline_cfg = [
     dict(type='FrameReshaper'),
     dict(type='RangeFFT'),
     dict(type='StaticClutterRemoval', active=True),
@@ -27,8 +27,3 @@ mmmesh_pipeline_cfg = [
         fft_size=64
     )
 ]
-
-dsp_cfg = dict(
-    radar_cfg=mmmesh_radar_cfg,
-    pipeline=mmmesh_pipeline_cfg
-)

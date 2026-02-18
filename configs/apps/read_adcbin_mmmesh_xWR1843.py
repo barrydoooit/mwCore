@@ -1,30 +1,21 @@
+_base_ = ['../dsp/mmmesh_xWR1843.py']
 type = 'BaseMWApp'
 
 # --------------------------------
 thread_cfg = dict(
-    type='OfflineAdcDataReaderWorker',  # This calls the factory in offline_adcbin_reader.py
-    playback_speed=1.0,                 # Real-time speed
+    type='OfflineAdcDataReaderWorker',
+    playback_speed=1.0,
     reader=dict(
-        type='OfflineAdcDataReader',    # The class in adcbin_reader.py
+        type='OfflineAdcDataReader',
         data_dir='tests',
         file_pattern=r".*\.bin",
-        frame_rate=100.0,                # Important for timing calculation
-        pipeline=dict(                  # Inject the DSP pipeline
+        frame_rate=100.0,
+        pipeline=dict(
             type='DspPipeline', 
-            radar_config= dict(
-                mode="3D",
-                num_tx=3, num_rx=4, loops_per_frame=128, adc_samples=256,
-                start_freq_ghz=77, freq_slope_mhz_us=60.012, sample_rate_ksps=4400,
-                idle_time_us=7, ramp_end_time_us=65, cfar_threshold_scale=15.0
-            ), 
-            pipeline_cfg=[
-                dict(type='FrameReshaper'),
-                dict(type='RangeFFT'),
-                dict(type='StaticClutterRemoval', active=True),
-                dict(type='DopplerFFT', clutter_removal=False),
-                dict(type='TopKDetector', top_k=128, range_cut_idx=(25, 125)),
-                dict(type='NaiveAoA', fft_size=64)
-            ]
+            # Use the variable mmmesh_radar_cfg defined in the base file
+            radar_config=_base_.mmwave_radar_cfg,
+            # Use the variable mmmesh_pipeline_cfg defined in the base file
+            pipeline_cfg=_base_.dsp_pipeline_cfg
         )
     )
 )
