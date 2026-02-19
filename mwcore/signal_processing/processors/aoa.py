@@ -1,145 +1,290 @@
-import numpy as np
+from __future__ import annotations
 
+import numpy as np
 from mwcore.registry import ADCPROCESSORS
 from mwcore.signal_processing.frame import RadarFrame
 from mwcore.signal_processing.processors.base import BaseSignalProcess, Supports2D, Supports3D
 
 
-@ADCPROCESSORS.register_module()
-class AoA_DopplerCompensated(BaseSignalProcess, Supports2D, Supports3D):
-    """
-    Professional Beamforming AoA.
-    Supports both 2D (Azimuth only) and 3D (Azimuth + Elevation).
-    """
-    requires = {'detected_points', 'doppler_fft'}
-    provides = {'point_cloud'}
+def _signed_angle_bin(k: np.ndarray, n: int) -> np.ndarray:
+    """Map FFT bin index to signed integer in [-n/2, n/2)."""
+    ks = k.astype(np.int32).copy()
+    ks[ks > (n // 2) - 1] -= n
+    return ks
 
-    def __init__(self, name: str = "AoA_DopplerCompensated"):
+
+def _bin_to_sin(ks: np.ndarray, n: int) -> np.ndarray:
+    """TI-style mapping used in your existing AoA/math: sin(theta) ≈ 2*k/N."""
+    return (2.0 * ks.astype(np.float32)) / float(n)
+
+
+@ADCPROCESSORS.register_module()
+class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
+    """
+    TI-style AoA DPU behavior with:
+      - Doppler compensation (TDM MIMO)
+      - multiObjBeamForming (2nd azimuth peak)
+      - aoaFovCfg filtering
+
+    Output point_cloud follows DATA_FORMAT.md
+    """
+    requires = {"detected_points", "doppler_fft"}
+    provides = {"point_cloud"}
+
+    def __init__(
+        self,
+        num_angle_bins: int = 64,
+        points_first: bool = True,
+        # Doppler compensation:
+        apply_doppler_comp: bool = True,
+        tx_offsets: list[int] | None = None,  # e.g. [0,1,2] means Tx0 first, Tx1 second, Tx2 third
+        # multiObjBeamForming:
+        multi_obj_enable: bool = True,
+        multi_obj_thresh: float = 0.5,  # thresholdScale in [0..1]
+        multi_obj_exclusion: int = 2,   # bins to exclude around peak1 when searching peak2
+        # aoaFovCfg:
+        aoa_fov_az_deg: tuple[float, float] = (-90.0, 90.0),
+        aoa_fov_el_deg: tuple[float, float] = (-90.0, 90.0),
+        name: str = "",
+    ):
         super().__init__(name)
-    
-    def _prepare_data(self, frame: RadarFrame):
-        """Common data extraction and Doppler compensation."""
-        # 1. Safely read inputs
-        det_points = self.read(frame, 'detected_points')
-        if det_points is None or len(det_points) == 0:
-            return None, None, None
+        self.n_ang = int(num_angle_bins)
+        self.points_first = bool(points_first)
+
+        self.apply_doppler_comp = bool(apply_doppler_comp)
+        self.tx_offsets = tx_offsets  # resolved at runtime if None
+
+        self.multi_obj_enable = bool(multi_obj_enable)
+        self.multi_obj_thresh = float(multi_obj_thresh)
+        self.multi_obj_exclusion = int(multi_obj_exclusion)
+
+        self.aoa_fov_az_deg = aoa_fov_az_deg
+        self.aoa_fov_el_deg = aoa_fov_el_deg
+
+    def _doppler_signed(self, d_idx_shifted: np.ndarray, n_doppler: int) -> np.ndarray:
+        # doppler FFT is fftshifted in DopplerFFT
+        return d_idx_shifted.astype(np.int32) - (n_doppler // 2)
+
+    def _gather_and_compensate(self, frame: RadarFrame):
+        det = self.read(frame, "detected_points")
+        if det is None or len(det) == 0:
+            return None
 
         cfg = frame.config
-        r_idxs = det_points[:, 0].astype(int)
-        d_idxs = det_points[:, 1].astype(int)
-        
-        # Extract data: (Tx, Rx, N_det)
-        doppler_fft = self.read(frame, 'doppler_fft')
-        antenna_data = doppler_fft[:, :, d_idxs, r_idxs]
-        
-        # Doppler Compensation (TDM Correction)
-        # Tx1 fires 1 unit later, Tx2 fires 2 units later (relative to Tx0)
-        # Note: Check specific board layout. Usually Tx0->Tx2->Tx1
-        N_doppler = cfg.loops_per_frame
-        d_idxs_signed = d_idxs.copy()
-        d_idxs_signed[d_idxs_signed >= N_doppler // 2] -= N_doppler
+        d_fft = self.read(frame, "doppler_fft")  # (Tx,Rx,Doppler,Range)
 
-        for i_obj in range(len(d_idxs)):
-            dop_idx = d_idxs_signed[i_obj]
-            # Phase correction per unit time delay
-            phase_corr = np.exp(-1j * 2 * np.pi * dop_idx / (N_doppler * cfg.num_tx))
-            
-            # Apply to Tx2 (Delay 1) and Tx1 (Delay 2) - assuming 0-2-1 order
-            antenna_data[1, :, i_obj] *= phase_corr       # Tx2
-            antenna_data[2, :, i_obj] *= (phase_corr ** 2) # Tx1
+        r_idx = det[:, 0].astype(np.int32)
+        d_idx = det[:, 1].astype(np.int32)  # shifted indices
+        snr_db = det[:, 2].astype(np.float32)
 
-        return antenna_data, r_idxs, d_idxs_signed
+        data = d_fft[:, :, d_idx, r_idx]  # (Tx,Rx,N)
+
+        n_doppler = cfg.loops_per_frame
+        d_signed = self._doppler_signed(d_idx, n_doppler)
+
+        if self.apply_doppler_comp:
+            offsets = self.tx_offsets
+            if offsets is None:
+                # Default: Tx0, Tx1, Tx2 in order
+                offsets = list(range(cfg.num_tx))
+
+            offsets = np.asarray(offsets, dtype=np.int32)
+            if offsets.size != cfg.num_tx:
+                raise ValueError(f"tx_offsets must have length num_tx={cfg.num_tx}. Got {offsets.tolist()}")
+
+            # phase_corr base = exp(-j 2pi * doppler_bin / (N_doppler * num_tx))
+            base = np.exp(-1j * 2.0 * np.pi * (d_signed.astype(np.float32) / (n_doppler * cfg.num_tx)))
+
+            # Apply per-Tx offset
+            for tx in range(cfg.num_tx):
+                if offsets[tx] == 0:
+                    continue
+                data[tx, :, :] *= base[None, :] ** offsets[tx]
+
+        return data, r_idx, d_idx, d_signed, snr_db
+
+    def _azimuth_fft(self, az_ant: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        az_ant: (N_az, N)
+        Returns:
+          k1 (N,), peak1_complex (N,), spectrum_mag2 (N_ang, N)
+        """
+        n_obj = az_ant.shape[1]
+        x = np.zeros((self.n_ang, n_obj), dtype=np.complex64)
+        x[: az_ant.shape[0], :] = az_ant.astype(np.complex64)
+        X = np.fft.fft(x, axis=0)
+        mag2 = (np.abs(X) ** 2).astype(np.float32)
+        k1 = np.argmax(mag2, axis=0).astype(np.int32)
+        peak1 = X[k1, np.arange(n_obj)]
+        return k1, peak1, mag2
+
+    def _second_peak(self, mag2: np.ndarray, k1: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Find 2nd peak excluding neighborhood around k1.
+        Returns (k2, ok_mask)
+        """
+        mag2c = mag2.copy()
+        n = mag2.shape[0]
+        for i in range(k1.size):
+            c = int(k1[i])
+            lo = max(0, c - self.multi_obj_exclusion)
+            hi = min(n, c + self.multi_obj_exclusion + 1)
+            mag2c[lo:hi, i] = -np.inf
+        k2 = np.argmax(mag2c, axis=0).astype(np.int32)
+        p1 = mag2[k1, np.arange(k1.size)]
+        p2 = mag2[k2, np.arange(k1.size)]
+        ok = p2 >= (self.multi_obj_thresh * p1)  # TI: thresholdScale * firstPeakHeight
+        return k2, ok
+
+    def _apply_aoa_fov(self, x_sin: np.ndarray, z_sin: np.ndarray) -> np.ndarray:
+        # Convert sin to degrees safely
+        az = np.degrees(np.arcsin(np.clip(x_sin, -1.0, 1.0)))
+        el = np.degrees(np.arcsin(np.clip(z_sin, -1.0, 1.0)))
+        ok = (az >= self.aoa_fov_az_deg[0]) & (az <= self.aoa_fov_az_deg[1]) & \
+             (el >= self.aoa_fov_el_deg[0]) & (el <= self.aoa_fov_el_deg[1])
+        return ok
 
     def process_2d(self, frame: RadarFrame) -> None:
-        """2D Implementation: Calculate X, Y. Force Z=0."""
-        data, r_idxs, d_idxs_signed = self._prepare_data(frame)
-        if data is None:
-            self.write(frame, 'point_cloud', np.zeros((6, 0)))
+        out = self._gather_and_compensate(frame)
+        if out is None:
+            self.write(frame, "point_cloud", np.zeros((0, 6), dtype=np.float32) if self.points_first else np.zeros((6, 0), dtype=np.float32))
             return
-        # 1. Select Azimuth Antennas Only (Tx0 + Tx2) -> 8 Antennas
-        # We ignore Tx1 (Elevation) completely in 2D mode
-        azimuth_ant = np.concatenate((data[0], data[1]), axis=0)
-        
-        # 2. Beamforming (FFT)
-        num_angle_bins = 64
-        az_fft_in = np.zeros((num_angle_bins, data.shape[2]), dtype=np.complex_)
-        az_fft_in[:8, :] = azimuth_ant
-        
-        az_fft = np.fft.fft(az_fft_in, axis=0)
-        peak_idxs = np.argmax(np.abs(az_fft), axis=0)
-        
-        # 3. Angle to Coordinate
-        peak_idxs[peak_idxs > num_angle_bins//2] -= num_angle_bins
-        x_vec = (2 * peak_idxs) / num_angle_bins
-        
-        # 4. Geometry (2D: y = sqrt(1 - x^2))
-        y_sq = 1 - x_vec**2
-        valid = y_sq > 0
-        
-        y_vec = np.zeros_like(x_vec)
-        y_vec[valid] = np.sqrt(y_sq[valid])
-        
-        # 5. Build Cloud
+
+        data, r_idx, d_idx, d_signed, snr_db = out
         cfg = frame.config
-        r_vals = r_idxs[valid] * cfg.range_resolution
-        x = x_vec[valid] * r_vals
-        y = y_vec[valid] * r_vals
-        z = np.zeros_like(x) # Z is explicitly 0
-        v = d_idxs_signed[valid] * cfg.doppler_resolution
-        
-        # Re-read detected points to extract SNR for the valid indices
-        det_points = self.read(frame, 'detected_points')
-        snr = det_points[valid, 2]
-        
-        point_cloud = np.stack((x, y, z, v, snr, r_vals), axis=0)
-        self.write(frame, 'point_cloud', point_cloud)
+
+        # Azimuth antennas: Tx0 + Tx2 => 8 virtual azimuth channels (matches your current approach)
+        az_ant = np.concatenate([data[0], data[2]], axis=0)  # (8, N)
+
+        k1, peak1, mag2 = self._azimuth_fft(az_ant)
+        k1s = _signed_angle_bin(k1, self.n_ang)
+        x_sin = _bin_to_sin(k1s, self.n_ang)
+
+        # 2D: z=0
+        z_sin = np.zeros_like(x_sin, dtype=np.float32)
+
+        # Geometry
+        y2 = 1.0 - x_sin ** 2
+        valid = y2 > 0
+        y_sin = np.zeros_like(x_sin, dtype=np.float32)
+        y_sin[valid] = np.sqrt(y2[valid]).astype(np.float32)
+
+        # aoaFovCfg filtering
+        valid &= self._apply_aoa_fov(x_sin, z_sin)
+
+        r_m = r_idx.astype(np.float32) * cfg.range_resolution - float(cfg.range_bias_m)
+        v_mps = d_signed.astype(np.float32) * cfg.doppler_resolution
+
+        x = x_sin * r_m
+        y = y_sin * r_m
+        z = z_sin * r_m
+
+        keep = valid & (r_m > 0)
+        pc = np.stack([x[keep], y[keep], z[keep], v_mps[keep], snr_db[keep], r_m[keep]], axis=0).astype(np.float32)
+        pc = pc.T if self.points_first else pc
+        self.write(frame, "point_cloud", pc)
 
     def process_3d(self, frame: RadarFrame) -> None:
-        """3D Implementation: Calculate X, Y, Z."""
-        data, r_idxs, d_idxs_signed = self._prepare_data(frame)
-        if data is None:
-            self.write(frame, 'point_cloud', np.zeros((6, 0)))
+        out = self._gather_and_compensate(frame)
+        if out is None:
+            self.write(frame, "point_cloud", np.zeros((0, 6), dtype=np.float32) if self.points_first else np.zeros((6, 0), dtype=np.float32))
             return
-        # 1. Azimuth FFT (Same as 2D)
-        azimuth_ant = np.concatenate((data[0], data[1]), axis=0)
-        num_angle_bins = 64
-        az_fft_in = np.zeros((num_angle_bins, data.shape[2]), dtype=np.complex_)
-        az_fft_in[:8, :] = azimuth_ant
-        az_fft = np.fft.fft(az_fft_in, axis=0)
-        peak_idxs = np.argmax(np.abs(az_fft), axis=0)
-        
-        peak_idxs[peak_idxs > num_angle_bins//2] -= num_angle_bins
-        x_vec = (2 * peak_idxs) / num_angle_bins
-        
-        # 2. Elevation (Phase Difference)
-        # Compare Tx1 (Elev) vs Tx0 (Azim reference)
-        # Note: Professional code often matches specific overlapping arrays.
-        # Simple Phase Diff approach:
-        elevation_ant = data[2] # Tx1
-        # Correlate Elevation row with Azimuth row (Tx0)
-        phase_diffs = np.angle(elevation_ant * np.conj(data[0]))
-        wz_avg = np.mean(phase_diffs, axis=0)
-        z_vec = wz_avg / np.pi
-        
-        # 3. Geometry (3D: y = sqrt(1 - x^2 - z^2))
-        y_sq = 1 - x_vec**2 - z_vec**2
-        valid = y_sq > 0
-        
-        y_vec = np.zeros_like(x_vec)
-        y_vec[valid] = np.sqrt(y_sq[valid])
-        z_vec = z_vec[valid] # Keep Z where valid
-        
-        # 4. Build Cloud
+
+        data, r_idx, d_idx, d_signed, snr_db = out
         cfg = frame.config
-        r_vals = r_idxs[valid] * cfg.range_resolution
-        x = x_vec[valid] * r_vals
-        y = y_vec[valid] * r_vals
-        z = z_vec[valid] * r_vals
-        v = d_idxs_signed[valid] * cfg.doppler_resolution
-        
-        # Re-read detected points to extract SNR for the valid indices
-        det_points = self.read(frame, 'detected_points')
-        snr = det_points[valid, 2]
-        
-        point_cloud = np.stack((x, y, z, v, snr, r_vals), axis=0)
-        self.write(frame, 'point_cloud', point_cloud)
+
+        # Azimuth antennas: Tx0 + Tx2
+        az_ant = np.concatenate([data[0], data[2]], axis=0)  # (8, N)
+        k1, peak1, mag2 = self._azimuth_fft(az_ant)
+
+        # Optional multi-object: duplicate detections at same (r,d) with 2nd az peak
+        k_list = [k1]
+        peak_list = [peak1]
+        r_list = [r_idx]
+        d_list = [d_idx]
+        ds_list = [d_signed]
+        snr_list = [snr_db]
+
+        if self.multi_obj_enable:
+            k2, ok = self._second_peak(mag2, k1)
+            if np.any(ok):
+                # Gather peak2 complex
+                n_obj = az_ant.shape[1]
+                xpad = np.zeros((self.n_ang, n_obj), dtype=np.complex64)
+                xpad[: az_ant.shape[0], :] = az_ant.astype(np.complex64)
+                X = np.fft.fft(xpad, axis=0)
+                peak2 = X[k2, np.arange(n_obj)]
+
+                k_list.append(k2[ok])
+                peak_list.append(peak2[ok])
+                r_list.append(r_idx[ok])
+                d_list.append(d_idx[ok])
+                ds_list.append(d_signed[ok])
+                snr_list.append(snr_db[ok])
+
+        # Concatenate (possibly extended list)
+        k_all = np.concatenate(k_list, axis=0)
+        peak_az_all = np.concatenate(peak_list, axis=0)
+        r_all = np.concatenate(r_list, axis=0)
+        d_all = np.concatenate(d_list, axis=0)
+        ds_all = np.concatenate(ds_list, axis=0)
+        snr_all = np.concatenate(snr_list, axis=0)
+
+        # Rebuild azimuth sin(x)
+        k_all_s = _signed_angle_bin(k_all, self.n_ang)
+        wx = (2.0 * np.pi * k_all_s.astype(np.float32)) / float(self.n_ang)
+        x_sin = (wx / np.pi).astype(np.float32)  # equivalent to 2*k/N
+
+        # Elevation antennas: Tx1 (your current convention)
+        # We estimate elevation via phase compare like your mmMesh-style approach.
+        # Extract elevation channel data at the same detections.
+        # NOTE: data is still only N original objects; for duplicated multiobj items we reuse Tx1 samples by index.
+        # We'll map by reconstructing elevation peaks from the original pool:
+        # For simplicity, re-gather elevation spectrum for the original N then index into it.
+
+        # Original elevation FFT peaks per original detection
+        elev_ant = data[1]  # Tx1 is middle in default firing order
+        n0 = elev_ant.shape[1]
+        el_pad = np.zeros((self.n_ang, n0), dtype=np.complex64)
+        el_pad[: elev_ant.shape[0], :] = elev_ant.astype(np.complex64)
+        EL = np.fft.fft(el_pad, axis=0)
+        el_k = np.argmax(np.abs(EL) ** 2, axis=0).astype(np.int32)
+        peak_el0 = EL[el_k, np.arange(n0)]
+
+        # If multiobj duplicated, we need to map each duplicated item back to a source original index.
+        # Since we constructed duplicates via boolean ok mask on the original ordering, we can reconstruct that mapping.
+        # Build mapping indices:
+        base_idx = np.arange(n0, dtype=np.int32)
+        map_idx = [base_idx]
+        if self.multi_obj_enable:
+            _, ok = self._second_peak(mag2, k1)
+            if np.any(ok):
+                map_idx.append(base_idx[ok])
+        map_idx_all = np.concatenate(map_idx, axis=0)
+
+        peak_el_all = peak_el0[map_idx_all]
+
+        # TI-style elevation phase usage (mirrors your mmMesh-style wz expression)
+        wz = np.angle(peak_az_all * np.conj(peak_el_all) * np.exp(1j * 2.0 * wx))
+        z_sin = (wz / np.pi).astype(np.float32)
+
+        # Geometry
+        y2 = 1.0 - x_sin ** 2 - z_sin ** 2
+        valid = y2 > 0
+        y_sin = np.zeros_like(x_sin, dtype=np.float32)
+        y_sin[valid] = np.sqrt(y2[valid]).astype(np.float32)
+
+        # aoaFovCfg filtering :contentReference[oaicite:45]{index=45}
+        valid &= self._apply_aoa_fov(x_sin, z_sin)
+
+        r_m = r_all.astype(np.float32) * cfg.range_resolution - float(cfg.range_bias_m)
+        v_mps = ds_all.astype(np.float32) * cfg.doppler_resolution
+
+        x = x_sin * r_m
+        y = y_sin * r_m
+        z = z_sin * r_m
+
+        keep = valid & (r_m > 0)
+        pc = np.stack([x[keep], y[keep], z[keep], v_mps[keep], snr_all[keep], r_m[keep]], axis=0).astype(np.float32)
+        pc = pc.T if self.points_first else pc
+        self.write(frame, "point_cloud", pc)

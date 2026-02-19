@@ -34,32 +34,36 @@ class OfflineAdcDataReaderWorker(QObject):
         
         while not QThread.currentThread().isInterruptionRequested():
             start_time = time.time()
-            
+
             try:
                 if hasattr(self.reader, 'current_file_idx'):
                     if self.reader.current_file_idx != self._last_file_idx:
                         self._last_file_idx = self.reader.current_file_idx
-                        # Use the existing get_progress method
                         if hasattr(self.reader, 'get_progress'):
                             self.progress_signal.emit(self.reader.get_progress())
 
-                if hasattr(self.reader, 'read'):
-                    data = self.reader.read()
-                else:
-                    data = next(self.reader)
-                
-                # Handle End of Data
+                try:
+                    data = self.reader.read() if hasattr(self.reader, 'read') else next(self.reader)
+                except Exception:
+                    log.exception(
+                        "Exception while reading data. reader=%s file_idx=%s",
+                        type(self.reader).__name__,
+                        getattr(self.reader, "current_file_idx", None),
+                    )
+                    break  # or continue / emit error signal, your choice
+
                 if data is None:
                     log.info("OfflineAdcReaderWorker: End of data stream (None).")
                     break
-                    
+
                 self.frame_signal.emit(data)
-                
+
             except StopIteration:
                 log.info("OfflineAdcReaderWorker: StopIteration reached.")
                 break
-            except Exception as e:
-                log.error(f"Error: {e}")
+            except Exception:
+                # catch-all for anything else in the loop
+                log.exception("Unhandled exception in OfflineAdcReaderWorker loop.")
                 break
             
             if self._sleep_time > 0 and not self._fast_forward:
