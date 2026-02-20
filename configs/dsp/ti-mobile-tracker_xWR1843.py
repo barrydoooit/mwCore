@@ -29,7 +29,7 @@ dsp_pipeline_cfg = [
     ),
 
     # 3) Doppler FFT (2D FFT second dimension): loops -> doppler bins (fftshifted)
-    dict(type="DopplerFFT", window="hann", clutter_removal=False),
+    dict(type="DopplerFFT", window="hamming", clutter_removal=False),
 
     # 4) CFAR stage 1: Range direction (procDirection=0)
     #    Note: reads doppler_fft and produces energy_map + range_cfar_mask

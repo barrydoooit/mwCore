@@ -136,3 +136,69 @@ class DopplerFFT(BaseSignalProcess):
         d_fft = np.fft.fftshift(fft_out, axes=2)  # IMPORTANT: shifted Doppler indexing
         self.write(frame, "doppler_fft", d_fft)
  
+@ADCPROCESSORS.register_module()
+class DopplerCompensation(BaseSignalProcess):
+    """
+    Doppler compensation for TDM-MIMO.
+    """
+    requires = {"doppler_fft"}
+    provides = {"doppler_fft"}
+
+    def __init__(
+        self,
+        enabled: bool = True,
+        *,
+        tx_spacing_chirps: float = 1.0,
+        doppler_fftshifted: bool = True,
+        reference_tx: int = 0,
+        name: str = "DopplerCompensation",
+    ):
+        super().__init__(name)
+        self.enabled = bool(enabled)
+        self.tx_spacing_chirps = float(tx_spacing_chirps)
+        self.doppler_fftshifted = bool(doppler_fftshifted)
+        self.reference_tx = int(reference_tx)
+
+    def _process_generic(self, frame: RadarFrame) -> None:
+        if not self.enabled:
+            return
+
+        dfft = self.read(frame, "doppler_fft")  # (Tx,Rx,D,R)
+        cfg = frame.config
+        n_tx = int(cfg.num_tx)
+
+        if n_tx <= 1:
+            return
+
+        if dfft.ndim != 4:
+            raise ValueError(f"[{self.name}] Expected doppler_fft with 4 dims (Tx,Rx,D,R). Got {dfft.shape}")
+
+        tx, rx, nd, nr = dfft.shape
+        if tx != n_tx:
+            # Not fatal, but usually indicates an upstream mismatch
+            raise ValueError(f"[{self.name}] doppler_fft Tx dim={tx} does not match cfg.num_tx={n_tx}")
+
+        # Doppler signed bin index (your DopplerFFT is fftshifted by default) :contentReference[oaicite:5]{index=5}
+        if self.doppler_fftshifted:
+            d_signed = (np.arange(nd, dtype=np.float64) - (nd // 2))
+        else:
+            # If not shifted, signed mapping: [0..nd-1] -> [0..nd/2-1, -nd/2..-1]
+            d_signed = np.arange(nd, dtype=np.float64)
+            d_signed[d_signed >= (nd // 2)] -= nd
+
+        # TX index relative to reference (TX0 is typically reference)
+        tx_ids = (np.arange(n_tx, dtype=np.float64) - float(self.reference_tx)).reshape(-1, 1)
+
+        # Compensation phase:
+        #   exp(-j * 2π * d_signed * tx_id * tx_spacing_chirps / (nd * num_tx))
+        # (Derived for your per-TX-loop Doppler FFT representation.)
+        phase = np.exp(
+            -1j
+            * 2.0
+            * np.pi
+            * (tx_ids * (self.tx_spacing_chirps * d_signed.reshape(1, -1)))
+            / (float(nd) * float(n_tx))
+        )  # (Tx, D)
+
+        dfft_comp = dfft * phase[:, None, :, None]
+        self.write(frame, "doppler_fft", dfft_comp)

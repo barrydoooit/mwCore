@@ -9,7 +9,6 @@ mmwave_radar_cfg = dict(
     sample_rate_ksps=4400,
     idle_time_us=7,
     ramp_end_time_us=65,
-    cfar_threshold_scale=15.0
 )
 
 dsp_pipeline_cfg = [
