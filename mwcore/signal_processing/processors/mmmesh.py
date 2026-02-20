@@ -19,52 +19,71 @@ class TopKDetector(BaseSignalProcess):
     requires = {'doppler_fft'}
     provides = {'detected_points', 'energy_map'}
 
-    def __init__(self, top_k: int = 128, range_cut_idx: Tuple[int, int] = (25, 125), name: str = "TopKDetector"):
+    def __init__(
+        self,
+        top_k: int = 128,
+        range_cut_idx: Tuple[int, int] = (25, 125),
+        floor_db: float = -100.0,
+        name: str = "TopKDetector",
+    ):
         super().__init__(name)
-        self.top_k = top_k
-        self.min_range_idx, self.max_range_idx = range_cut_idx
+        self.top_k = int(top_k)
+        self.min_range_idx, self.max_range_idx = int(range_cut_idx[0]), int(range_cut_idx[1])
+        self.floor_db = float(floor_db)
 
-    def _process_generic(self, frame: RadarFrame):
-        doppler_fft = self.read(frame, 'doppler_fft')
-        # Calculate Energy Map (Sum of Mags across antennas)
-        # Shape: (Loops, Samples) -> (Doppler, Range)
-        coherent = np.sum(doppler_fft, axis=(0,1))
-        energy_map = np.log10(np.abs(coherent) + 1e-12)
-        
-        # Note: mmMesh typically zeroes out the edges
-        energy_map[:, :self.min_range_idx] = -100
-        energy_map[:, self.max_range_idx:] = -100
+    def _process_generic(self, frame: RadarFrame) -> None:
+        doppler_fft = self.read(frame, "doppler_fft")  # (Tx, Rx, DopplerBins, RangeBins)
 
-        flat_energy = energy_map.ravel()
-        # Safety check if K is larger than total bins
-        k = min(self.top_k, flat_energy.size - 1)
-        
-        # np.partition moves the K-th largest element to the pivot position
-        # We want the indices of the largest K elements
-        partition_idx = flat_energy.size - k
-        threshold = np.partition(flat_energy, partition_idx)[partition_idx]
-        
-        # Generate Mask & Indices
-        mask = energy_map >= threshold
-        det_indices = np.argwhere(mask)  # Shape: (N, 2) -> [Doppler, Range]
-        
-        # Limit to exactly K if we got more due to duplicate values
-        if len(det_indices) > k:
-            # Sort by energy to get strictly top K
-            # (Optional refinement, mmMesh might just take whatever comes)
-            vals = energy_map[mask]
-            sort_order = np.argsort(vals)[::-1] # Descending
-            det_indices = det_indices[sort_order[:k]]
+        # (DopplerBins, RangeBins): coherent integration across antennas (phase-sensitive)
+        coh = np.sum(doppler_fft, axis=(0, 1))
 
-        # det_indices is (Doppler, Range)
-        d_idxs = det_indices[:, 0]
-        r_idxs = det_indices[:, 1]
-        peaks_vals = energy_map[d_idxs, r_idxs]
-        
-        detected_points = np.column_stack((r_idxs, d_idxs, peaks_vals))
-        
-        self.write(frame, 'detected_points', detected_points)
-        self.write(frame, 'energy_map', energy_map)
+        # Uses log10(|.|) (not 10log10(power))
+        # Zeros become -inf, which is also consistent with the reference behavior.
+        score_map = np.log10(np.abs(coh))
+
+        # mmMesh range cut (reference uses -100)
+        if self.min_range_idx > 0:
+            score_map[:, : self.min_range_idx] = self.floor_db
+        score_map[:, self.max_range_idx :] = self.floor_db
+
+        flat = score_map.ravel()
+        if flat.size < 2:
+            detected_points = np.zeros((0, 3), dtype=np.float32)
+
+            p = np.sum(np.abs(doppler_fft) ** 2, axis=(0, 1))
+            energy_map_db = 10.0 * np.log10(p + 1e-12)
+            if self.min_range_idx > 0:
+                energy_map_db[:, : self.min_range_idx] = self.floor_db
+            energy_map_db[:, self.max_range_idx :] = self.floor_db
+
+            self.write(frame, "detected_points", detected_points)
+            self.write(frame, "energy_map", energy_map_db.astype(np.float32, copy=False))
+            return
+
+        # Replicate reference thresholding: idx = total_bins - top_k - 1
+        k = min(max(self.top_k, 1), flat.size - 1)
+        idx = flat.size - k - 1
+        threshold = np.partition(flat, idx)[idx]
+
+        mask = score_map > threshold  # strict > like reference
+
+        det_indices = np.argwhere(mask)  # (N, 2): [doppler_idx, range_idx]
+        d_idxs = det_indices[:, 0].astype(np.int32, copy=False)
+        r_idxs = det_indices[:, 1].astype(np.int32, copy=False)
+        p = np.sum(np.abs(doppler_fft) ** 2, axis=(0, 1))  # (DopplerBins, RangeBins)
+        energy_map_db = 10.0 * np.log10(p + 1e-12)
+
+        # Apply the same range-cut floor for consistency in output
+        if self.min_range_idx > 0:
+            energy_map_db[:, : self.min_range_idx] = self.floor_db
+        energy_map_db[:, self.max_range_idx :] = self.floor_db
+
+        peaks_vals = energy_map_db[d_idxs, r_idxs].astype(np.float32, copy=False)
+        # column order: [range_idx, doppler_idx, peak_value]
+        detected_points = np.column_stack((r_idxs, d_idxs, peaks_vals)).astype(np.float32, copy=False)
+
+        self.write(frame, "detected_points", detected_points)
+        self.write(frame, "energy_map", energy_map_db.astype(np.float32, copy=False))
 
 
 @ADCPROCESSORS.register_module()
