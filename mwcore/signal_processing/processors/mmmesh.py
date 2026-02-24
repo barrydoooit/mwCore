@@ -7,6 +7,7 @@ from scipy.ndimage import convolve1d
 from mwcore.registry import ADCPROCESSORS
 from mwcore.signal_processing.frame import RadarFrame
 from mwcore.signal_processing.processors.base import BaseSignalProcess, Supports2D, Supports3D
+from .utils import apply_doppler_compensation
 
 
 @ADCPROCESSORS.register_module()
@@ -98,13 +99,21 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
     def __init__(self, 
                  fft_size: int = 64, 
                  points_first: bool = True,
+                 apply_doppler_comp: bool = True,
+                 tx_offsets: Optional[List[int]] = None,
+                 azimuth_tx_indices: tuple[int, int] = (0, 1), 
+                 elevation_tx_index: int = 2,
                  name: str = "NaiveAoA"):
         super().__init__(name)
         self.points_first = points_first
         self.fft_size = fft_size
+        self.apply_doppler_comp = apply_doppler_comp
+        self.tx_offsets = tx_offsets
+        self.azimuth_tx_indices = azimuth_tx_indices
+        self.elevation_tx_index = elevation_tx_index
 
     def _get_vectors_2d(self, azimuth_ant):
-        """Helper to get X vector only. (MATH UNTOUCHED)"""
+        """Helper to get X vector only."""
         num_detected = azimuth_ant.shape[1]
         az_padded = np.zeros((self.fft_size, num_detected), dtype=np.complex_)
 
@@ -130,15 +139,24 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
         doppler_fft = self.read(frame, 'doppler_fft')
         
         if len(det_points) == 0:
-            self.write(frame, 'point_cloud', np.zeros((6, 0)))
+            pc_dim_first = np.zeros((6, 0))
+            self.write(frame, 'point_cloud', pc_dim_first.T if self.points_first else pc_dim_first)
             return
 
         r_idxs = det_points[:, 0].astype(int)
         d_idxs = det_points[:, 1].astype(int)
         
-        # Extract Tx0 and Tx2 (Azimuth)
         # Shape: (Tx, Rx, N) -> (2, 4, N)
-        data = doppler_fft[[0, 1], :, d_idxs, r_idxs]
+        idx1, idx2 = self.azimuth_tx_indices
+        data = doppler_fft[[idx1, idx2], :, d_idxs, r_idxs].copy()
+        if self.apply_doppler_comp:
+            data = apply_doppler_compensation(
+                data=data,
+                d_idxs=d_idxs,
+                num_doppler_bins=frame.config.loops_per_frame,
+                num_tx=frame.config.num_tx,
+                tx_offsets=self.tx_offsets
+            )
         azimuth_ant = np.concatenate((data[0], data[1]), axis=0)
         
         x_vec, _, _ = self._get_vectors_2d(azimuth_ant)
@@ -161,16 +179,28 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
         doppler_fft = self.read(frame, 'doppler_fft')
         
         if len(det_points) == 0:
-            self.write(frame, 'point_cloud', np.zeros((6, 0)))
+            pc_dim_first = np.zeros((6, 0))
+            self.write(frame, 'point_cloud', pc_dim_first.T if self.points_first else pc_dim_first)
             return
 
         r_idxs = det_points[:, 0].astype(int)
         d_idxs = det_points[:, 1].astype(int)
         
         # Extract All Txs
-        data = doppler_fft[:, :, d_idxs, r_idxs]
-        azimuth_ant = np.concatenate((data[0], data[1]), axis=0)
-        elevation_ant = data[2] # Tx1
+        data = doppler_fft[:, :, d_idxs, r_idxs].copy()
+        if self.apply_doppler_comp:
+            data = apply_doppler_compensation(
+                data=data,
+                d_idxs=d_idxs,
+                num_doppler_bins=frame.config.loops_per_frame,
+                num_tx=frame.config.num_tx,
+                tx_offsets=self.tx_offsets
+            )
+            
+        idx1, idx2 = self.azimuth_tx_indices
+        el_idx = self.elevation_tx_index
+        azimuth_ant = np.concatenate((data[idx1], data[idx2]), axis=0)
+        elevation_ant = data[el_idx] # Tx1
         
         # Get X
         x_vec, peak_az, wx = self._get_vectors_2d(azimuth_ant)

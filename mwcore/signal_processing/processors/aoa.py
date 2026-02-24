@@ -4,7 +4,7 @@ import numpy as np
 from mwcore.registry import ADCPROCESSORS
 from mwcore.signal_processing.frame import RadarFrame
 from mwcore.signal_processing.processors.base import BaseSignalProcess, Supports2D, Supports3D
-
+from .utils import apply_doppler_compensation
 
 def _signed_angle_bin(k: np.ndarray, n: int) -> np.ndarray:
     """Map FFT bin index to signed integer in [-n/2, n/2)."""
@@ -27,6 +27,9 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
       - aoaFovCfg filtering
 
     Output point_cloud follows DATA_FORMAT.md
+
+    Note that it currently only supports the typical TI 3 TX antenna configuration, where
+    two antennas are used for azimuth and one for elevation. 
     """
     requires = {"detected_points", "doppler_fft"}
     provides = {"point_cloud"}
@@ -38,6 +41,8 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
         # Doppler compensation:
         apply_doppler_comp: bool = True,
         tx_offsets: list[int] | None = None,  # e.g. [0,1,2] means Tx0 first, Tx1 second, Tx2 third
+        azimuth_tx_indices: tuple[int, int] = (0, 1), 
+        elevation_tx_index: int = 2,
         # multiObjBeamForming:
         multi_obj_enable: bool = True,
         multi_obj_thresh: float = 0.5,  # thresholdScale in [0..1]
@@ -53,6 +58,9 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
 
         self.apply_doppler_comp = bool(apply_doppler_comp)
         self.tx_offsets = tx_offsets  # resolved at runtime if None
+
+        self.azimuth_tx_indices = azimuth_tx_indices
+        self.elevation_tx_index = int(elevation_tx_index)
 
         self.multi_obj_enable = bool(multi_obj_enable)
         self.multi_obj_thresh = float(multi_obj_thresh)
@@ -83,23 +91,13 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
         d_signed = self._doppler_signed(d_idx, n_doppler)
 
         if self.apply_doppler_comp:
-            offsets = self.tx_offsets
-            if offsets is None:
-                # Default: Tx0, Tx1, Tx2 in order
-                offsets = list(range(cfg.num_tx))
-
-            offsets = np.asarray(offsets, dtype=np.int32)
-            if offsets.size != cfg.num_tx:
-                raise ValueError(f"tx_offsets must have length num_tx={cfg.num_tx}. Got {offsets.tolist()}")
-
-            # phase_corr base = exp(-j 2pi * doppler_bin / (N_doppler * num_tx))
-            base = np.exp(-1j * 2.0 * np.pi * (d_signed.astype(np.float32) / (n_doppler * cfg.num_tx)))
-
-            # Apply per-Tx offset
-            for tx in range(cfg.num_tx):
-                if offsets[tx] == 0:
-                    continue
-                data[tx, :, :] *= base[None, :] ** offsets[tx]
+            data = apply_doppler_compensation(
+                            data=data,
+                            d_idxs=d_idx,
+                            num_doppler_bins=n_doppler,
+                            num_tx=cfg.num_tx,
+                            tx_offsets=self.tx_offsets
+                        )
 
         return data, r_idx, d_idx, d_signed, snr_db
 
@@ -154,7 +152,8 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
         cfg = frame.config
 
         # Azimuth antennas: Tx0 + Tx2 => 8 virtual azimuth channels (matches your current approach)
-        az_ant = np.concatenate([data[0], data[2]], axis=0)  # (8, N)
+        idx1, idx2 = self.azimuth_tx_indices
+        az_ant = np.concatenate([data[idx1], data[idx2]], axis=0)  # (8, N)
 
         k1, peak1, mag2 = self._azimuth_fft(az_ant)
         k1s = _signed_angle_bin(k1, self.n_ang)
@@ -194,7 +193,8 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
         cfg = frame.config
 
         # Azimuth antennas: Tx0 + Tx2
-        az_ant = np.concatenate([data[0], data[2]], axis=0)  # (8, N)
+        idx1, idx2 = self.azimuth_tx_indices
+        az_ant = np.concatenate([data[idx1], data[idx2]], axis=0)  # (8, N)
         k1, peak1, mag2 = self._azimuth_fft(az_ant)
 
         # Optional multi-object: duplicate detections at same (r,d) with 2nd az peak
@@ -243,17 +243,13 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
         # For simplicity, re-gather elevation spectrum for the original N then index into it.
 
         # Original elevation FFT peaks per original detection
-        elev_ant = data[1]  # Tx1 is middle in default firing order
+        el_idx = self.elevation_tx_index
+        elev_ant = data[el_idx]
         n0 = elev_ant.shape[1]
         el_pad = np.zeros((self.n_ang, n0), dtype=np.complex64)
         el_pad[: elev_ant.shape[0], :] = elev_ant.astype(np.complex64)
         EL = np.fft.fft(el_pad, axis=0)
-        el_k = np.argmax(np.abs(EL) ** 2, axis=0).astype(np.int32)
-        peak_el0 = EL[el_k, np.arange(n0)]
-
-        # If multiobj duplicated, we need to map each duplicated item back to a source original index.
-        # Since we constructed duplicates via boolean ok mask on the original ordering, we can reconstruct that mapping.
-        # Build mapping indices:
+        # If multiobj duplicated, build mapping indices to the original objects
         base_idx = np.arange(n0, dtype=np.int32)
         map_idx = [base_idx]
         if self.multi_obj_enable:
@@ -262,7 +258,9 @@ class AoA_TI_DPU(BaseSignalProcess, Supports2D, Supports3D):
                 map_idx.append(base_idx[ok])
         map_idx_all = np.concatenate(map_idx, axis=0)
 
-        peak_el_all = peak_el0[map_idx_all]
+        # Extract elevation complex value at the EXACT azimuth bin 
+        # k_all contains the azimuth bin (k1 or k2), map_idx_all contains the object index
+        peak_el_all = EL[k_all, map_idx_all]
 
         # TI-style elevation phase usage (mirrors your mmMesh-style wz expression)
         wz = np.angle(peak_az_all * np.conj(peak_el_all) * np.exp(1j * 2.0 * wx))

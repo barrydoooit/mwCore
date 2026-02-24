@@ -21,7 +21,7 @@ dsp_pipeline_cfg = [
     # 2) Optional TI DC range signature removal (calibDcRangeSig)
     dict(
         type="CalibDcRangeSig",
-        enabled=False,
+        enabled=True,
         negative_bin_idx=-5,
         positive_bin_idx=8,
         num_avg_chirps=256,
@@ -29,7 +29,7 @@ dsp_pipeline_cfg = [
     ),
 
     # 3) Doppler FFT (2D FFT second dimension): loops -> doppler bins (fftshifted)
-    dict(type="DopplerFFT", window="hamming", clutter_removal=False),
+    dict(type="DopplerFFT", window="hamming", clutter_removal=True),
 
     # 4) CFAR stage 1: Range direction (procDirection=0)
     #    Note: reads doppler_fft and produces energy_map + range_cfar_mask
@@ -50,7 +50,7 @@ dsp_pipeline_cfg = [
         averaging_mode="CA",
         noise_win=4,
         guard_len=2,
-        threshold_db=20.0,
+        threshold_db=15.0,
         cyclic=True,
         div_shift=None,  # auto
         peak_grouping=False,
@@ -65,9 +65,11 @@ dsp_pipeline_cfg = [
         type="AoA_TI_DPU",
         num_angle_bins=64,
         points_first=True,
-        multi_obj_enable=True,
+        azimuth_tx_indices=(0, 1),
+        elevation_tx_index=2,
+        multi_obj_enable=False,
         multi_obj_thresh=0.5,
         aoa_fov_az_deg=(-90, 90),
-        aoa_fov_el_deg=(-90, 90),
+        aoa_fov_el_deg=(-45, 45),
     ),
 ]
