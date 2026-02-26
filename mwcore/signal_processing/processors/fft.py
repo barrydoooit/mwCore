@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Optional
 
 import numpy as np
 from mwcore.registry import ADCPROCESSORS
@@ -23,15 +24,22 @@ class RangeFFT(BaseSignalProcess):
     requires = {"radar_cube"}
     provides = {"range_fft"}
 
-    def __init__(self, window: str = "hann", name: str = ""):
+    def __init__(self, 
+                 window: str = "hann", 
+                 fft_size: Optional[int] = None,
+                 name: str = "RangeFFT"):
         super().__init__(name)
         self.window = window
+        self.fft_size = None if fft_size is None else int(fft_size)
 
     def _process_generic(self, frame: RadarFrame) -> None:
         cube = self.read(frame, "radar_cube")  # (Tx,Rx,Loops,Samples)
-        n = frame.config.adc_samples
-        w = _get_window(self.window, n).reshape(1, 1, 1, -1)
-        r_fft = np.fft.fft(cube * w, axis=3)
+        n_adc = int(frame.config.adc_samples)
+        n_fft = n_adc if self.fft_size is None else int(self.fft_size)
+        if n_fft <= 0:
+            raise ValueError(f"[{self.name}] fft_size must be >0. Got {n_fft}")
+        w = _get_window(self.window, n_adc).reshape(1, 1, 1, -1)
+        r_fft = np.fft.fft(cube * w, n=n_fft, axis=3)
         self.write(frame, "range_fft", r_fft)
 
 
@@ -102,7 +110,7 @@ class CalibDcRangeSig(BaseSignalProcess):
         # Signature shape: (Tx,Rx,len(bins))
         sig = r_fft[:, :, :num_avg_loops, :][:, :, :, bins].mean(axis=2)
 
-        # Decide which loops to subtract on (TI: apply after the averaging period) :contentReference[oaicite:18]{index=18}
+        # Decide which loops to subtract on
         start_sub = 0 if self.subtract_during_estimation else num_avg_loops
         if start_sub >= n_loops:
             return
