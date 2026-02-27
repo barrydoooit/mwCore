@@ -7,9 +7,15 @@ class RadarFrame:
     Central Data Structure acting as a dynamic blackboard.
     Processors attach data here dynamically during the pipeline execution.
     """
-    def __init__(self, raw_bytes: bytes, config: Optional[RadarConfig] = None):
+    def __init__(
+        self,
+        raw_bytes: bytes,
+        config: Optional[RadarConfig] = None,
+        frame_start_timestamp_ms: Optional[float] = None,
+    ):
         self._config = config
         self.raw_bytes = raw_bytes
+        self.frame_start_timestamp_ms = frame_start_timestamp_ms
     
     @property
     def config(self) -> RadarConfig:

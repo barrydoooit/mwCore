@@ -1,4 +1,4 @@
-from typing import List, Dict, Union, Any
+from typing import List, Dict, Union, Any, Optional
 from mwcore.registry import ADCPROCESSORS
 from .frame import RadarFrame, RadarConfig
 
@@ -47,10 +47,18 @@ class DspPipeline:
         pipeline_steps = cfg.get('pipeline_cfg', [])
         return cls(radar_config, pipeline_steps)
 
-    def run(self, raw_bytes: bytes) -> RadarFrame:
+    def run(
+        self,
+        raw_bytes: bytes,
+        frame_start_timestamp_ms: Optional[float] = None,
+    ) -> RadarFrame:
         """Process a single frame of raw data."""
 
-        frame = RadarFrame(raw_bytes, self.config)
+        frame = RadarFrame(
+            raw_bytes,
+            self.config,
+            frame_start_timestamp_ms=frame_start_timestamp_ms,
+        )
         self.runner(frame)
         
         return frame
