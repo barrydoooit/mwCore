@@ -14,7 +14,8 @@ class FrameReshaper(BaseSignalProcess):
 
     def _process_generic(self, frame: RadarFrame) -> None:
         raw_bytes = self.read(frame, 'raw_bytes')
-        raw_int16 = np.frombuffer(raw_bytes, dtype=np.int16)
+        # ADC raw stream is defined as little-endian int16.
+        raw_int16 = np.frombuffer(raw_bytes, dtype="<i2")
         
         raw_complex = np.zeros(len(raw_int16)//2, dtype=np.complex_)
         raw_complex[0::2] = raw_int16[0::4] + 1j * raw_int16[2::4]

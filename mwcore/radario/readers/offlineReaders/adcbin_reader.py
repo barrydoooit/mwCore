@@ -28,6 +28,7 @@ class OfflineAdcDataReader(BaseReader):
                  file_pattern: str = r".*\.bin", 
                  frame_rate: Optional[float] = None,
                  pipeline: Optional[Union[DspPipeline, dict]] = None,
+                 has_timestamp: bool = False,
                  # Fallback params if pipeline is not provided
                  num_chirps: int = 128,
                  num_rx: int = 4,
@@ -38,6 +39,8 @@ class OfflineAdcDataReader(BaseReader):
         
         self.data_dir = Path(data_dir)
         self.frame_rate = frame_rate
+        self.has_timestamp = bool(has_timestamp)
+        self.header_size_bytes = 8 if self.has_timestamp else 0
         self.file_pattern = re.compile(file_pattern)
         if isinstance(pipeline, dict):
             self.pipeline = DspPipeline.from_cfg(pipeline)
@@ -61,6 +64,7 @@ class OfflineAdcDataReader(BaseReader):
         
         iq_factor = 2 if self.is_complex else 1
         self.frame_size_bytes = (self.num_chirps * self.num_tx * self.num_rx * self.num_samples * iq_factor * self.bytes_per_sample)
+        self.record_size_bytes = self.header_size_bytes + self.frame_size_bytes
         
         # 2. Discovery Files
         self.file_list = sorted([
@@ -115,23 +119,39 @@ class OfflineAdcDataReader(BaseReader):
         if not self._file_handle:
             return None
             
-        raw_data = self._file_handle.read(self.frame_size_bytes)
-        
-        # Handle End of File
-        if len(raw_data) < self.frame_size_bytes:
-            if self._open_next_file():
-                return self.read()
-            else:
-                # End of all data
-                return None
+        record = self._read_one_record()
+        if record is None:
+            return None
+        timestamp_ms, raw_data = record
         
         self.frames_in_current_file += 1
         self.current_frame_idx += 1
         
         if self.pipeline:
-            return self.pipeline.run(raw_data)
+            return self.pipeline.run(raw_data, frame_start_timestamp_ms=timestamp_ms)
         else:
             return raw_data
+
+    def _read_one_record(self) -> Optional[Tuple[Optional[float], bytes]]:
+        if not self._file_handle:
+            return None
+
+        timestamp_ms: Optional[float] = None
+        if self.has_timestamp:
+            ts_data = self._file_handle.read(8)
+            if len(ts_data) < 8:
+                if self._open_next_file():
+                    return self._read_one_record()
+                return None
+            timestamp_ms = struct.unpack("<d", ts_data)[0]
+
+        raw_data = self._file_handle.read(self.frame_size_bytes)
+        if len(raw_data) < self.frame_size_bytes:
+            if self._open_next_file():
+                return self._read_one_record()
+            return None
+
+        return timestamp_ms, raw_data
 
     def close(self):
         if self._file_handle:

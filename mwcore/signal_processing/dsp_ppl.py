@@ -49,16 +49,24 @@ class DspPipeline:
 
     def run(
         self,
-        raw_bytes: bytes,
+        raw_bytes: Optional[bytes] = None,
+        start_with_this_frame: Optional[RadarFrame] = None,
         frame_start_timestamp_ms: Optional[float] = None,
     ) -> RadarFrame:
         """Process a single frame of raw data."""
-
-        frame = RadarFrame(
-            raw_bytes,
-            self.config,
-            frame_start_timestamp_ms=frame_start_timestamp_ms,
-        )
+        
+        if start_with_this_frame is not None:
+            frame = start_with_this_frame
+            frame._config = self.config
+        elif raw_bytes is not None:
+            frame = RadarFrame(
+                raw_bytes,
+                self.config,
+                frame_start_timestamp_ms=frame_start_timestamp_ms,
+            )
+        else:
+            raise ValueError("Either raw_bytes or start_with_this_frame must be provided")
+        
         self.runner(frame)
         
         return frame
