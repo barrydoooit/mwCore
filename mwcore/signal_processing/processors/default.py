@@ -17,7 +17,7 @@ class FrameReshaper(BaseSignalProcess):
         # ADC raw stream is defined as little-endian int16.
         raw_int16 = np.frombuffer(raw_bytes, dtype="<i2")
         
-        raw_complex = np.zeros(len(raw_int16)//2, dtype=np.complex_)
+        raw_complex = np.zeros(len(raw_int16)//2, dtype=np.complex128)
         raw_complex[0::2] = raw_int16[0::4] + 1j * raw_int16[2::4]
         raw_complex[1::2] = raw_int16[1::4] + 1j * raw_int16[3::4]
         

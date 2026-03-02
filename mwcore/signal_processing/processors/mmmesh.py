@@ -115,7 +115,7 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
     def _get_vectors_2d(self, azimuth_ant):
         """Helper to get X vector only."""
         num_detected = azimuth_ant.shape[1]
-        az_padded = np.zeros((self.fft_size, num_detected), dtype=np.complex_)
+        az_padded = np.zeros((self.fft_size, num_detected), dtype=np.complex128)
 
         num_az_ant = azimuth_ant.shape[0]
         az_padded[:num_az_ant, :] = azimuth_ant
@@ -207,7 +207,7 @@ class NaiveAoA(BaseSignalProcess, Supports2D, Supports3D):
         
         # Get Z (Elevation Phase Diff)
         # Pad elevation to same size
-        el_padded = np.zeros((self.fft_size, data.shape[2]), dtype=np.complex_)
+        el_padded = np.zeros((self.fft_size, data.shape[2]), dtype=np.complex128)
         # el_padded[:4, :] = elevation_ant # 4 Rx
         el_padded[:elevation_ant.shape[0], :] = elevation_ant
         el_fft = np.fft.fft(el_padded, axis=0)

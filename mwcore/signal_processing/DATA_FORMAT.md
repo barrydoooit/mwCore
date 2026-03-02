@@ -36,23 +36,23 @@ This design allows algorithms to be swapped modularly (e.g., using a standard CF
   * **Shape:** 1D byte string (e.g., length 1,572,864).
   * **Description:** The exact byte chunk read from the `.bin` file. Unaltered.
 * **`raw_complex`**
-  * **Type:** `np.ndarray` (`dtype=np.complex_`)
+  * **Type:** `np.ndarray` (`dtype=np.complex128`)
   * **Shape:** 1D array (e.g., length 393,216).
   * **Description:** The raw bytes parsed into complex numbers. At this stage, the data is still a flat 1D sequence representing the chronological capture order.
 
 ### Level 1: Multidimensional Formatting
 * **`radar_cube`**
-  * **Type:** `np.ndarray` (`dtype=np.complex_`)
+  * **Type:** `np.ndarray` (`dtype=np.complex128`)
   * **Shape:** `(Tx, Rx, Loops, Samples)`
   * **Description:** The parsed complex numbers reshaped into the physical dimensions of the radar capture. It is transposed to an **"antenna-first"** format to make spatial operations (like AoA) mathematically convenient later in the pipeline.
 
 ### Level 2: Frequency Domain Transformations
 * **`range_fft`**
-  * **Type:** `np.ndarray` (`dtype=np.complex_`)
+  * **Type:** `np.ndarray` (`dtype=np.complex128`)
   * **Shape:** `(Tx, Rx, Loops, RangeBins)` *(Same as `radar_cube`)*
   * **Description:** Time-domain ADC samples converted into Range bins via a 1D FFT along the last axis. Modules like `StaticClutterRemoval` operate directly on this array to filter out zero-Doppler signatures.
 * **`doppler_fft`**
-  * **Type:** `np.ndarray` (`dtype=np.complex_`)
+  * **Type:** `np.ndarray` (`dtype=np.complex128`)
   * **Shape:** `(Tx, Rx, DopplerBins, RangeBins)`
   * **Description:** The Range-Doppler matrix. Created by performing a 1D FFT across the `Loops` axis. This provides velocity information for every spatial antenna combination.
 
