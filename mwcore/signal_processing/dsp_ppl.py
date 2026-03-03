@@ -42,7 +42,7 @@ class DspPipeline:
                 - 'radar_cfg': dict of arguments for RadarConfig
                 - 'pipeline': list of dicts defining the processing steps
         """
-        radar_args = cfg.get('radar_cfg', {})
+        radar_args = cfg.get('radar_cfg', cfg.get('radar_config', {}))
         radar_config = RadarConfig(**radar_args)
         pipeline_steps = cfg.get('pipeline_cfg', [])
         return cls(radar_config, pipeline_steps)
@@ -54,10 +54,16 @@ class DspPipeline:
         frame_start_timestamp_ms: Optional[float] = None,
     ) -> RadarFrame:
         """Process a single frame of raw data."""
-        
+
         if start_with_this_frame is not None:
             frame = start_with_this_frame
-            frame._config = self.config
+            if frame._config is None:
+                frame._config = self.config
+            else:
+                assert frame._config == self.config, (
+                    "RadarFrame config mismatch with DspPipeline config. "
+                    "Ensure capture and pipeline use identical radar_cfg."
+                )
         elif raw_bytes is not None:
             frame = RadarFrame(
                 raw_bytes,

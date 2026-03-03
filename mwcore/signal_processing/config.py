@@ -61,3 +61,20 @@ class RadarConfig:
         t_chirp = (self.idle_time_us + self.ramp_end_time_us) * 1e-6
         self.doppler_resolution = c / (2 * self.start_freq_ghz * 1e9 * t_chirp * self.loops_per_frame * self.num_tx)
         self.max_doppler = c / (4 * self.start_freq_ghz * 1e9 * t_chirp * self.num_tx)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RadarConfig):
+            return False
+        return (
+            self.mode == other.mode
+            and self.num_tx == other.num_tx
+            and self.num_rx == other.num_rx
+            and self.loops_per_frame == other.loops_per_frame
+            and self.adc_samples == other.adc_samples
+            and np.isclose(self.start_freq_ghz, other.start_freq_ghz)
+            and np.isclose(self.freq_slope_mhz_us, other.freq_slope_mhz_us)
+            and self.sample_rate_ksps == other.sample_rate_ksps
+            and np.isclose(self.idle_time_us, other.idle_time_us)
+            and np.isclose(self.ramp_end_time_us, other.ramp_end_time_us)
+            and np.isclose(self.range_bias_m, other.range_bias_m)
+        )

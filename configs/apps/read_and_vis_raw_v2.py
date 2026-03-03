@@ -9,9 +9,7 @@ thread_cfg = dict(
         radar_cfg=_base_.mmwave_radar_cfg,
         pipeline=dict(
             type='DspPipeline', 
-            # Use the variable mmmesh_radar_cfg defined in the base file
-            radar_config=_base_.mmwave_radar_cfg,
-            # Use the variable mmmesh_pipeline_cfg defined in the base file
+            radar_cfg=_base_.mmwave_radar_cfg,
             pipeline_cfg=_base_.dsp_pipeline_cfg
         )
     )
