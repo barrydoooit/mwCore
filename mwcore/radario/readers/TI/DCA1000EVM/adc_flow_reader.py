@@ -83,36 +83,55 @@ class RawAdcUdpFlowReader(BaseReader):
             logger.warning("Frame %s had lost packets - skipping", frame_num)
             return 0, "Lost packets"
         return 1, "OK"
-    
-    def read(self) -> Tuple[int, int, Union[Dict[str, Any], RadarFrame]]:
+
+    def _save_raw_frame_to_file(
+        self,
+        frame_data: np.ndarray,
+        frame_start_timestamp_ms: Optional[float],
+    ) -> None:
+        if self.file_handle is None:
+            return
+        if self.save_with_timestamp:
+            ts_ms = frame_start_timestamp_ms if frame_start_timestamp_ms is not None else time.time() * 1000.0
+            self.file_handle.write(struct.pack("<d", float(ts_ms)))
+        # Store as little-endian int16, frame-major contiguous bytes.
+        # This matches the format expected by OfflineAdcDataReader.
+        raw_bytes = np.ascontiguousarray(frame_data).astype("<i2", copy=False).tobytes()
+        self.file_handle.write(raw_bytes)
+        self.file_handle.flush()
+
+    def poll_raw_frame(self) -> Tuple[int, int, Optional[np.ndarray], Optional[float]]:
         frame_data, frame_num, lost_packet_flag, frame_start_timestamp_ms = self.capture_thread.get_frame(
             include_timestamp=True
         )
 
-        status, msg = self._handle_frame_errors(frame_num, lost_packet_flag)
+        status, _ = self._handle_frame_errors(frame_num, lost_packet_flag)
         if status == 0:
-            return 0, frame_num, {}
+            return 0, frame_num, None, None
+        if not isinstance(frame_data, np.ndarray):
+            logger.error("Invalid frame data type: %s", type(frame_data))
+            return 0, frame_num, None, None
 
         if self.file_handle is not None:
             try:
-                if self.save_with_timestamp:
-                    ts_ms = frame_start_timestamp_ms if frame_start_timestamp_ms is not None else time.time() * 1000.0
-                    self.file_handle.write(struct.pack("<d", float(ts_ms)))
-                # Store as little-endian int16, frame-major contiguous bytes.
-                # This matches the format expected by OfflineAdcDataReader.
-                raw_bytes = np.ascontiguousarray(frame_data).astype("<i2", copy=False).tobytes()
-                self.file_handle.write(raw_bytes)
-                self.file_handle.flush()
+                self._save_raw_frame_to_file(frame_data, frame_start_timestamp_ms)
             except Exception as exc:
                 logger.error("Error writing to .bin file: %s", exc)
+        return 1, frame_num, frame_data, frame_start_timestamp_ms
 
+    def process_raw_frame(
+        self,
+        frame_data: np.ndarray,
+        frame_num: int,
+        frame_start_timestamp_ms: Optional[float],
+    ) -> Tuple[int, Union[Dict[str, Any], RadarFrame]]:
         data_ok, out = self.gen_point_cloud(
             frame_data=frame_data,
             frame_num=frame_num,
             frame_start_timestamp_ms=frame_start_timestamp_ms,
         )
         if not data_ok:
-            return 0, frame_num, {}
+            return 0, {}
 
         self._frame_count += 1
         if self._frame_count % 100 == 0:
@@ -125,7 +144,19 @@ class RawAdcUdpFlowReader(BaseReader):
                 num_obj = int(out.get("numObj", 0))
             if num_obj > 0:
                 logger.info("Processed %s frames (latest: %s points)", self._frame_count, num_obj)
-
+        return 1, out
+    
+    def read(self) -> Tuple[int, int, Union[Dict[str, Any], RadarFrame]]:
+        data_ok, frame_num, frame_data, frame_start_timestamp_ms = self.poll_raw_frame()
+        if not data_ok or frame_data is None:
+            return 0, frame_num, {}
+        data_ok, out = self.process_raw_frame(
+            frame_data=frame_data,
+            frame_num=frame_num,
+            frame_start_timestamp_ms=frame_start_timestamp_ms,
+        )
+        if not data_ok:
+            return 0, frame_num, {}
         return 1, frame_num, out
 
     def gen_point_cloud(
