@@ -73,11 +73,11 @@ class UdpCaptureThread(threading.Thread):
         
         # Create network destinations
         self.cfg_dest = (adc_ip, config_port)
-        self.cfg_recv = (static_ip, config_port)
+        # self.cfg_recv = (static_ip, config_port)
         self.data_recv = (static_ip, data_port)
         
         # Create sockets
-        self.config_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        # self.config_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         
         # Bind data socket
@@ -86,7 +86,7 @@ class UdpCaptureThread(threading.Thread):
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2**27)
         
         # Bind config socket
-        self.config_socket.bind(self.cfg_recv)
+        # self.config_socket.bind(self.cfg_recv)
         
         # Initialize circular buffer for frames
         self.buffer_array = np.zeros((self.buffer_size, self.uint16_in_frame), dtype=np.int16)
