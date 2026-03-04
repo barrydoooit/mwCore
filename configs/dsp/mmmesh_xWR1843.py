@@ -13,16 +13,26 @@ mmwave_radar_cfg = dict(
 
 dsp_pipeline_cfg = [
     dict(type='FrameReshaper'),
-    dict(type='RangeFFT'),
+    dict(type='RangeFFT', window="hamming"),
     dict(type='StaticClutterRemoval', active=True),
-    dict(type='DopplerFFT', clutter_removal=False),
+    dict(type='DopplerFFT', window="hamming", clutter_removal=False),
     dict(
         type='TopKDetector', 
         top_k=128, 
         range_cut_idx=(25, 125)
     ),
+    # dict(
+    #     type='NaiveAoA', 
+    #     fft_size=64
+    # ),
     dict(
-        type='NaiveAoA', 
-        fft_size=64
+        type="AoA_TI_DPU",
+        num_angle_bins=64,
+        points_first=True,
+        azimuth_tx_indices=(0, 1),
+        elevation_tx_index=2,
+        multi_obj_enable=False,
+        aoa_fov_az_deg=(-90, 90),
+        aoa_fov_el_deg=(-35, 35),
     )
 ]
