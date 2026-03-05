@@ -179,7 +179,16 @@ class UdpRawDataReader(SerialReader):
             # Convert point cloud to det_obj format
             # point_cloud shape is (6, N) where rows are [x, y, z, doppler, energy, range]
             if point_cloud.size == 0 or point_cloud.shape[1] == 0:
-                assert False, "No points detected"
+                det_obj = {
+                    'numObj': 0,
+                    'x': np.array([]),
+                    'y': np.array([]),
+                    'z': np.array([]),
+                    'doppler': np.array([]),
+                    'peakVal': np.array([]),
+                    'timestamp': timestamp * 1000
+                }
+                return 1, frame_num, det_obj
             
             # Extract point cloud components
             # point_cloud format: [x, y, z, doppler, energy, range]

@@ -13,7 +13,7 @@ class RadarConfig:
     """Configuration for radar sensor parameters."""
     num_tx: int = 3
     num_rx: int = 4
-    loops_per_frame: int = 128
+    loops_per_frame: int = 64
     adc_samples: int = 256
     num_angle_bins: int = 64
     range_resolution: float = 0.044
@@ -248,13 +248,11 @@ class StandardRadarProcessor(BaseRadarProcessor):
         
         if self.energy_top_128:
             top_size = 128
-            flat_idx = 128 * 256 - top_size - 1
-            # Safety for different sizes
             total_elements = doppler_db.size
-            if flat_idx < total_elements:
-                energy_thresh = np.partition(doppler_db.ravel(), flat_idx)[flat_idx]
-                cfar_result[doppler_db > energy_thresh] = True
-            
+            flat_idx = total_elements - top_size - 1
+            energy_thresh = np.partition(doppler_db.ravel(), flat_idx)[flat_idx]
+            cfar_result[doppler_db > energy_thresh] = True
+
         det_peaks_indices = np.argwhere(cfar_result == True)
         if len(det_peaks_indices) == 0:
             return np.array([]).reshape(6, 0) # Return empty compatible shape
