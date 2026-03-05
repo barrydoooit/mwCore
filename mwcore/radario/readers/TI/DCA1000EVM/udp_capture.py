@@ -73,11 +73,11 @@ class UdpCaptureThread(threading.Thread):
         
         # Create network destinations
         self.cfg_dest = (adc_ip, config_port)
-        # self.cfg_recv = (static_ip, config_port)
+        self.cfg_recv = (static_ip, config_port)
         self.data_recv = (static_ip, data_port)
         
         # Create sockets
-        # self.config_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.config_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         
         # Bind data socket
@@ -86,7 +86,7 @@ class UdpCaptureThread(threading.Thread):
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2**27)
         
         # Bind config socket
-        # self.config_socket.bind(self.cfg_recv)
+        self.config_socket.bind(self.cfg_recv)
         
         # Initialize circular buffer for frames
         self.buffer_array = np.zeros((self.buffer_size, self.uint16_in_frame), dtype=np.int16)
@@ -159,9 +159,37 @@ class UdpCaptureThread(threading.Thread):
             
             # Check for lost packets
             if last_packet_num < packet_num - 1:
-                logger.error(f"PACKET LOST! Expected {last_packet_num + 1}, got {packet_num}")
-                logger.error("Data integrity compromised. Please discard this capture session.")
-                current_frame_lost_packet_flag = True
+                lost_count = packet_num - 1 - last_packet_num
+                logger.warning(f"PACKET LOST! Expected {last_packet_num + 1}, got {packet_num} ({lost_count} packets lost)")
+                
+                # Flag the current (incomplete) frame as corrupted
+                self.lost_packet_flags[self.next_cap_buffer_position] = True
+                
+                # Re-sync: use byte_count to derive our true position in the frame stream.
+                # byte_count tells us the total bytes the DCA1000 has sent up to (but not
+                # including) this packet, so after this packet the total is byte_count + BYTES_IN_PACKET.
+                after_total = byte_count + self.BYTES_IN_PACKET
+                after_packet_count = after_total % self.bytes_in_frame
+                
+                # Update frame number
+                self.recent_cap_num = after_total // self.bytes_in_frame
+                
+                # Reset the partial frame and place this packet's data at the correct position
+                recent_frame = np.zeros(self.uint16_in_frame, dtype=np.int16)
+                
+                if after_packet_count < self.BYTES_IN_PACKET:
+                    # This packet spans a frame boundary — the tail belongs to the previous
+                    # (corrupted) frame which we discard; the head starts the new frame.
+                    recent_frame[0:after_packet_count//2] = packet_data[(self.BYTES_IN_PACKET - after_packet_count)//2:]
+                else:
+                    # Entire packet is within the current frame
+                    start_pos = after_packet_count - self.BYTES_IN_PACKET
+                    recent_frame[start_pos//2:after_packet_count//2] = packet_data
+                
+                recentframe_collect_count = after_packet_count
+                last_packet_num = packet_num
+                logger.info(f"Re-synced at frame {self.recent_cap_num}, offset {recentframe_collect_count} bytes into frame")
+                continue
             
             # Check if frame is complete with this packet
             if recentframe_collect_count + self.BYTES_IN_PACKET >= self.bytes_in_frame:
