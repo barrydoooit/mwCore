@@ -24,6 +24,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install system dependencies (Ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa libegl1
+
       - name: Install uv and setup python
         uses: astral-sh/setup-uv@v5
         with:

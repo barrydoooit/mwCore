@@ -11,23 +11,25 @@ from mwcore.registry import READERS
 from mwcore.radario.readers.offlineReaders.raw_bin_reader import RawBinReader
 
 class TestRawBinIntegration(unittest.TestCase):
+    FILE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'sample.bin')
+
+    @unittest.skipIf(not os.path.exists(FILE_PATH), "sample.bin not found. Skipping raw data test.")
     def test_registry_instantiation(self):
         """Test that we can build the reader from the registry."""
-        file_path = os.path.join(os.path.dirname(__file__), 'data', 'sample.bin')
         
         cfg = dict(
             type='RawBinReader',
-            file_path=file_path
+            file_path=self.FILE_PATH
         )
         
         reader = READERS.build(cfg)
         self.assertIsInstance(reader, RawBinReader)
         return reader
 
+    @unittest.skipIf(not os.path.exists(FILE_PATH), "sample.bin not found. Skipping raw data test.")
     def test_read_frame(self):
         """Test reading and processing a frame."""
-        file_path = os.path.join(os.path.dirname(__file__), 'data', 'sample.bin')
-        reader = RawBinReader(file_path=file_path)
+        reader = RawBinReader(file_path=self.FILE_PATH)
         
         # Read first frame
         points = reader.read()
