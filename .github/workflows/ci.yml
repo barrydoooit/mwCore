@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - mwcore-dev
+      - main
+  pull_request:
+    branches:
+      - mwcore-dev
+      - main
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }} with Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv and setup python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Run PyTest
+        run: uv run pytest tests/ -v
