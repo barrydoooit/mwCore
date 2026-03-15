@@ -20,12 +20,16 @@ class BaseTracker(TrackingFunctionality):
                        det_obj: Optional[dict] = None, 
                        point_array: Optional[np.ndarray] = None, 
                        keepRadial: bool = False, 
-                       transform: bool = False):
+                       transform: bool = False,
+                       filter_outliers: bool = False,
+                       sor_neighbors: int = 5,
+                       sor_std_ratio: float = 1.0):
         """
         Preprocesses the point cloud data from the sensor.
 
         This function filters the input point cloud, converts radial to Cartesian velocity,
         and transforms the coordinates to the standard vertical-horizontal plane axis system.
+        It also provides optional Statistical Outlier Removal (SOR) to reduce radar noise.
 
         Parameters
         ----------
@@ -43,21 +47,18 @@ class BaseTracker(TrackingFunctionality):
         transform : bool, optional
             If True, applies a transformation to the points to align them with the standard vertical-horizontal plane axis system.
         keepRadial : bool, optional
-        If True, retains the original radial measurements (r, θ, ṙ) alongside Cartesian-transformed values.
+            If True, retains the original radial measurements (r, θ, ṙ) alongside Cartesian-transformed values.
+        filter_outliers : bool, optional
+            If True, applies Statistical Outlier Removal to the point cloud before processing.
+        sor_neighbors : int, optional
+            Number of nearest neighbors to use for mean distance estimation in SOR.
+        sor_std_ratio : float, optional
+            Standard deviation multiplier for the distance threshold in SOR.
 
         Returns
         -------
         np.ndarray
             Preprocessed data in the standard vertical-horizontal plane axis system.
-            Columns:
-            - x-coordinate
-            - y-coordinate
-            - z-coordinate
-            - Cartesian velocity along the x-axis
-            - Cartesian velocity along the y-axis
-            - Cartesian velocity along the z-axis
-            - doppler
-            - peakval
         """
         if det_obj is not None:
             input_data = np.vstack(
@@ -65,11 +66,27 @@ class BaseTracker(TrackingFunctionality):
             ).T
         if point_array is not None:
             input_data = point_array
+            
+        if filter_outliers and len(input_data) > sor_neighbors:
+            from scipy.spatial import cKDTree
+            tree = cKDTree(input_data[:, :3])
+            # Query the distances to the nearest neighbors (k=sor_neighbors+1 since the point itself is included as distance 0)
+            distances, _ = tree.query(input_data[:, :3], k=sor_neighbors + 1)
+            # Calculate the mean distance for each point to its neighbors (excluding itself)
+            mean_sq_distances = np.mean(distances[:, 1:], axis=1)
+            
+            global_mean_dist = np.mean(mean_sq_distances)
+            global_std_dist = np.std(mean_sq_distances)
+            
+            # Keep points whose mean neighbor distance is within the threshold
+            threshold = global_mean_dist + (sor_std_ratio * global_std_dist)
+            mask = mean_sq_distances <= threshold
+            input_data = input_data[mask]
         
         ef_data = np.empty((0, 8), dtype="float") if not keepRadial else np.empty((0, 11), dtype="float")
 
         for index in range(len(input_data)):
-            x, y, z, doppler, peakVal = input_data[index]
+            x, y, z, doppler, peakVal = input_data[index][:5]
             # Compute polar coordinates
             r = math.sqrt(x**2 + y**2 + z**2)
             theta = math.atan2(y, x)  # Angle in radians
